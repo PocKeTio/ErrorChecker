@@ -1,0 +1,178 @@
+<Window x:Class="ErrorChecker.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:ErrorChecker"
+        xmlns:converters="clr-namespace:ErrorChecker.Converters"
+        mc:Ignorable="d"
+        Title="Assistance à distance" Height="600" Width="800"
+        WindowStartupLocation="CenterScreen"
+        Background="#F0F0F0"
+        PreviewKeyDown="MainWindow_PreviewKeyDown"
+        PreviewTextInput="MainWindow_PreviewTextInput">
+    
+    <Window.Resources>
+        <converters:ModeToVisibilityConverter x:Key="ModeToVisibilityConverter"/>
+        <converters:DepanneurVisibilityConverter x:Key="DepanneurVisibilityConverter"/>
+        <converters:BoolToStretchConverter x:Key="BoolToStretchConverter"/>
+        
+        <!-- Styles communs -->
+        <Style x:Key="BaseTextBlockStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Foreground" Value="#2C3E50"/>
+        </Style>
+
+        <Style x:Key="HeaderTextBlockStyle" TargetType="TextBlock" BasedOn="{StaticResource BaseTextBlockStyle}">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+
+        <Style TargetType="GroupBox">
+            <Setter Property="Margin" Value="0,0,0,10"/>
+            <Setter Property="Padding" Value="10"/>
+            <Setter Property="BorderBrush" Value="#BDC3C7"/>
+            <Setter Property="Background" Value="White"/>
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#BDC3C7"/>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#BDC3C7"/>
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Background" Value="#3498DB"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#2980B9"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#BDC3C7"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,5"/>
+            <Setter Property="Foreground" Value="#2C3E50"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel LastChildFill="True">
+        <!-- Panneau de configuration -->
+        <Border DockPanel.Dock="Left" Width="300" Background="White" BorderBrush="#E0E0E0" BorderThickness="0,0,1,0">
+            <DockPanel LastChildFill="True" Margin="15">
+                <!-- En-tête -->
+                <TextBlock DockPanel.Dock="Top" Text="Configuration" Style="{StaticResource HeaderTextBlockStyle}"/>
+
+                <!-- Configuration générale -->
+                <GroupBox DockPanel.Dock="Top" Header="Paramètres généraux">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="Mode :" Style="{StaticResource BaseTextBlockStyle}"/>
+                            <ComboBox x:Name="ModeSelection" SelectionChanged="ModeSelection_SelectionChanged">
+                                <ComboBoxItem Content="Utilisateur"/>
+                                <ComboBoxItem Content="Dépanneur"/>
+                            </ComboBox>
+                        </DockPanel>
+
+                        <DockPanel>
+                            <TextBlock Text="Dossier :" Style="{StaticResource BaseTextBlockStyle}"/>
+                            <Button x:Name="BrowseButton" Content="..." Width="30" Margin="0,0,5,0" Click="BrowseButton_Click"/>
+                            <TextBox x:Name="SharedFolderPath" Text="\\192.168.1.42\Sunny"/>
+                        </DockPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Options utilisateur -->
+                <GroupBox DockPanel.Dock="Top" Header="Options de partage" 
+                         Visibility="{Binding ElementName=ModeSelection, Path=SelectedItem.Content, Converter={StaticResource ModeToVisibilityConverter}}">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="Type :" Style="{StaticResource BaseTextBlockStyle}"/>
+                            <ComboBox x:Name="SharingType" SelectionChanged="SharingType_SelectionChanged">
+                                <ComboBoxItem Content="Écran"/>
+                                <ComboBoxItem Content="Application"/>
+                            </ComboBox>
+                        </DockPanel>
+
+                        <DockPanel x:Name="ScreenSelectionPanel" Margin="0,0,0,8">
+                            <TextBlock Text="Écran :" Style="{StaticResource BaseTextBlockStyle}"/>
+                            <ComboBox x:Name="ScreenSelection" SelectionChanged="ScreenSelection_SelectionChanged"/>
+                        </DockPanel>
+
+                        <DockPanel x:Name="WindowSelectionPanel" Margin="0,0,0,8">
+                            <TextBlock Text="App :" Style="{StaticResource BaseTextBlockStyle}"/>
+                            <Button DockPanel.Dock="Right" Content="↻" Width="30" 
+                                    Click="RefreshWindows_Click" ToolTip="Actualiser la liste"/>
+                            <ComboBox x:Name="WindowSelection" Margin="0,0,5,0" 
+                                    SelectionChanged="WindowSelection_SelectionChanged"/>
+                        </DockPanel>
+
+                        <CheckBox x:Name="AllowRemoteControl" Content="Autoriser le contrôle à distance" IsChecked="True"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Boutons de contrôle -->
+                <Border DockPanel.Dock="Bottom" Background="#F8F9FA" BorderBrush="#E0E0E0" 
+                        BorderThickness="0,1,0,0" Padding="10">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button x:Name="StartButton" Content="Démarrer" Click="StartButton_Click" 
+                                Width="80" Margin="0,0,5,0"/>
+                        <Button x:Name="StopButton" Content="Arrêter" Click="StopButton_Click" 
+                                Width="80" IsEnabled="False"/>
+                    </StackPanel>
+                </Border>
+            </DockPanel>
+        </Border>
+
+        <!-- Zone d'affichage -->
+        <Grid Background="#FFFFFF">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Border x:Name="ScreenDisplayBorder" Grid.Row="1" BorderThickness="1" BorderBrush="Black">
+                <Image x:Name="ScreenDisplay" 
+                       Stretch="{Binding ElementName=RealSizeMode, Path=IsChecked, Converter={StaticResource BoolToStretchConverter}}"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Top"
+                       MouseEnter="ScreenDisplay_MouseEnter"
+                       MouseLeave="ScreenDisplay_MouseLeave"
+                       Focusable="True"
+                       FocusVisualStyle="{x:Null}"
+                       KeyDown="MainWindow_KeyDown"/>
+            </Border>
+
+            <!-- Barre d'état -->
+            <StatusBar VerticalAlignment="Bottom" Background="#F8F9FA" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0">
+                <StatusBarItem>
+                    <TextBlock x:Name="StatusText" Text="Prêt" Foreground="#2C3E50"/>
+                </StatusBarItem>
+                <Separator/>
+                <StatusBarItem>
+                    <TextBlock x:Name="LatencyText" Text="{Binding Latency, UpdateSourceTrigger=PropertyChanged}" Foreground="#2C3E50"/>
+                </StatusBarItem>
+                <CheckBox x:Name="RealSizeMode" Content="Taille réelle" Margin="10,0,0,0" 
+                                 Checked="RealSizeMode_CheckedChanged" Unchecked="RealSizeMode_CheckedChanged"
+                                 Visibility="{Binding ElementName=ModeSelection, Path=SelectedItem.Content, Converter={StaticResource DepanneurVisibilityConverter}}"/>
+
+            </StatusBar>
+        </Grid>
+    </DockPanel>
+</Window>
