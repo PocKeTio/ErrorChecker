@@ -1,0 +1,92 @@
+<Window x:Class="ErrorChecker.HelperWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Assistance à distance – dépanneur" Width="1100" Height="750"
+        WindowStartupLocation="CenterScreen" Background="#F0F0F0"
+        PreviewKeyDown="Window_PreviewKeyDown" PreviewKeyUp="Window_PreviewKeyUp" Closing="Window_Closing">
+    <Window.Resources>
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="Margin" Value="8,0,4,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Margin" Value="0,0,4,0"/>
+            <Setter Property="Padding" Value="8,2"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <WrapPanel DockPanel.Dock="Top" Margin="4">
+            <TextBlock Text="Écran"/>
+            <ComboBox x:Name="ScreenBox" Width="170" SelectionChanged="Settings_Changed"/>
+            <TextBlock Text="Images/s"/>
+            <ComboBox x:Name="FpsBox" Width="50" SelectedIndex="2" SelectionChanged="Settings_Changed">
+                <ComboBoxItem Content="1"/>
+                <ComboBoxItem Content="2"/>
+                <ComboBoxItem Content="5"/>
+                <ComboBoxItem Content="10"/>
+            </ComboBox>
+            <TextBlock Text="Qualité"/>
+            <ComboBox x:Name="QualityBox" Width="120" SelectedIndex="1" SelectionChanged="Settings_Changed">
+                <ComboBoxItem Content="Basse" Tag="40"/>
+                <ComboBoxItem Content="Moyenne" Tag="70"/>
+                <ComboBoxItem Content="Haute" Tag="90"/>
+                <ComboBoxItem Content="Parfaite (PNG)" Tag="0"/>
+            </ComboBox>
+            <CheckBox x:Name="RealSizeBox" Content="Taille réelle" VerticalAlignment="Center" Margin="0,0,12,0"
+                      Checked="RealSize_Changed" Unchecked="RealSize_Changed"/>
+            <!-- Raccourcis envoyés tels quels (Tag = touche, avec modificateurs éventuels) -->
+            <Button Content="Échap" Tag="Escape" Click="Shortcut_Click"/>
+            <Button Content="F5" Tag="F5" Click="Shortcut_Click"/>
+            <Button Content="F8" Tag="F8" Click="Shortcut_Click"/>
+            <Button Content="Maj+F8" Tag="Shift+F8" Click="Shortcut_Click"/>
+            <Button Content="Ctrl+Pause" Tag="Ctrl+Cancel" Click="Shortcut_Click" ToolTip="Interrompre une macro VBA"/>
+            <Button Content="Alt+F11" Tag="Alt+F11" Click="Shortcut_Click" ToolTip="Éditeur VBA"/>
+            <TextBox x:Name="TextToSend" Width="160" Margin="8,0,4,0" VerticalContentAlignment="Center"
+                     ToolTip="Texte à taper chez l'utilisateur"/>
+            <Button Content="Envoyer le texte" Click="SendText_Click"/>
+            <Button Content="Terminer" Margin="12,0,0,0" Click="End_Click"/>
+        </WrapPanel>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText" Margin="0" Text="Connexion…"/>
+            </StatusBarItem>
+            <Separator/>
+            <StatusBarItem>
+                <TextBlock x:Name="StatsText" Margin="0"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- Cadre rouge : le clavier est envoyé à l'utilisateur -->
+        <Border BorderThickness="2">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="BorderBrush" Value="Gray"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter Property="BorderBrush" Value="Red"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <ScrollViewer x:Name="Viewer" Focusable="True" Background="#202020"
+                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled">
+                <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Image x:Name="ScreenImage" Stretch="Uniform" StretchDirection="DownOnly"
+                           MouseDown="ScreenImage_MouseDown" MouseUp="ScreenImage_MouseUp" MouseMove="ScreenImage_MouseMove"
+                           MouseWheel="ScreenImage_MouseWheel" LostMouseCapture="ScreenImage_LostMouseCapture"
+                           SizeChanged="ScreenImage_SizeChanged"/>
+                    <!-- Position de la souris de l'utilisateur -->
+                    <Canvas IsHitTestVisible="False">
+                        <Ellipse x:Name="RemoteCursor" Width="10" Height="10" Fill="#B0FF3030" Stroke="White" Visibility="Collapsed"/>
+                    </Canvas>
+                </Grid>
+            </ScrollViewer>
+        </Border>
+    </DockPanel>
+</Window>
