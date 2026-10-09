@@ -2,7 +2,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>WinExe</OutputType>
-        <!-- .NET Framework 4.8 : présent sur tous les Windows 10/11, rien à installer sur les postes -->
+        <!-- .NET Framework 4.8 : intégré à Windows 11 et Windows 10 >= 1903, rien à installer sur ces postes
+             (Windows 10 LTSC 2019 et plus anciens : installer 4.8 via Windows Update / WSUS) -->
         <TargetFramework>net48</TargetFramework>
         <LangVersion>10.0</LangVersion>
         <UseWPF>true</UseWPF>

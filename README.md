@@ -11,9 +11,13 @@ Tout passe par un **dossier partagé** (fichiers) et **Outlook** (notification) 
    ```
    dotnet build ErrorChecker.csproj -c Release
    ```
-   (dossier `bin/Release/net48/`). L'application cible **.NET Framework 4.8**, déjà présent sur tous les
-   Windows 10 et 11 : rien à installer sur les postes. Copier tout le dossier : `ErrorChecker.exe`,
-   `ErrorChecker.exe.config` (redirections de versions, indispensable) et les DLL qui l'accompagnent.
+   (dossier `bin/Release/net48/`). L'application cible **.NET Framework 4.8**, intégré à Windows 11 et à
+   Windows 10 depuis la version 1903 (mai 2019) : rien à installer sur ces postes. Windows 10 LTSC 2019 et
+   plus anciens sont livrés avec 4.7.2 ou moins : y installer .NET Framework 4.8 (Windows Update / WSUS,
+   KB4486153), sinon Windows propose de le télécharger au lancement.
+   Copier tout le dossier : `ErrorChecker.exe`, `ErrorChecker.exe.config` (redirections de versions,
+   indispensable) et les DLL qui l'accompagnent. **Lors d'une mise à jour, ne pas écraser le
+   `ErrorChecker.json` déjà configuré** (celui du dossier de compilation n'est qu'un exemple).
 2. Adapter `ErrorChecker.json` à côté de l'exécutable :
    ```json
    {
@@ -75,9 +79,10 @@ légèrement réduites, texte toujours net). « Sans perte » : aucun JPEG, pixe
 ## Tests
 
 ```
-dotnet test tests/ErrorChecker.Tests
+dotnet test tests/ErrorChecker.Tests -f net48
 ```
 Les tests tournent sur .NET Framework 4.8 (la cible de l'application) et sur .NET 6 : protocole, canal fichier,
 chiffrement, diff, défilement, codec palette, et simulation complète vérifiant que l'écran du dépanneur reste
-identique à celui de l'utilisateur. Sous Linux, la cible net48 s'exécute avec Mono :
+identique à celui de l'utilisateur. La cible net6.0 (`-f net6.0`) demande le runtime .NET 6.
+Sous Linux, la cible net48 s'exécute avec Mono :
 `mono ~/.nuget/packages/xunit.runner.console/2.5.0/tools/net481/xunit.console.exe tests/ErrorChecker.Tests/bin/Debug/net48/ErrorChecker.Tests.dll`
