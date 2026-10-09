@@ -1,0 +1,12 @@
+{
+  // Dossier partagé accessible en lecture/écriture par les utilisateurs ET le support (chemin UNC,
+  // pas une lettre de lecteur : tout le monde doit l'ouvrir avec le même chemin).
+  // Les antislashs sont doublés en JSON.
+  "SharedFolder": "\\\\192.168.1.42\\Sunny\\ErrorChecker",
+
+  // Qui peut recevoir les demandes d'aide. Le premier est proposé par défaut ;
+  // avec un seul dépanneur, l'utilisateur n'a rien à choisir.
+  "Helpers": [
+    { "Name": "Support", "Email": "aide@votre-societe.fr" }
+  ]
+}
