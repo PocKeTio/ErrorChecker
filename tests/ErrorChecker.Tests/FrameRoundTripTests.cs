@@ -90,6 +90,29 @@ public class FrameRoundTripTests
         }
     }
 
+    // Zones d'une même image décodées en parallèle : elles ne doivent jamais se chevaucher,
+    // sinon l'ordre de décodage décide du résultat (ex. JPEG flou par-dessus la version nette).
+    [Fact]
+    public void Patches_of_a_frame_never_overlap_even_when_most_of_the_screen_changes()
+    {
+        var encoder = new FrameEncoder(RawEncode, () => now, TimeSpan.FromMilliseconds(700));
+        var decoder = new FrameDecoder(RawDecode);
+        int seq = 0;
+        Send(encoder, decoder, Screen(0), 60, ref seq);          // l'encart « photo » part avec perte
+        now += Stopwatch.Frequency;                               // ... et devient à affiner
+        var busy = Screen(0);
+        for (int y = 0; y < 300; y++)                             // plus de la moitié de l'écran change, pas la photo
+            for (int x = 0; x < W; x++) busy[y * Stride + x * 4] ^= 0x55;
+        var frame = Send(encoder, decoder, busy, 60, ref seq)!;
+        for (int i = 0; i < frame.Patches.Length; i++)
+            for (int j = i + 1; j < frame.Patches.Length; j++)
+            {
+                Patch a = frame.Patches[i], b = frame.Patches[j];
+                bool overlap = a.X < b.X + b.W && b.X < a.X + a.W && a.Y < b.Y + b.H && b.Y < a.Y + a.H;
+                Assert.False(overlap, $"({a.X},{a.Y},{a.W}x{a.H}) chevauche ({b.X},{b.Y},{b.W}x{b.H})");
+            }
+    }
+
     [Fact]
     public void Scroll_sends_far_less_than_repainting()
     {

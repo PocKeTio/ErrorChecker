@@ -46,13 +46,10 @@ namespace ErrorChecker.Core
         }
 
         // Fusion des tuiles contiguës d'une ligne, puis des bandes identiques de lignes successives.
+        // Les zones obtenues ne couvrent que des tuiles modifiées et ne se chevauchent jamais.
         public static List<Area> Merge(bool[,] dirty, int width, int height, int tile = TileSize)
         {
-            int rows = dirty.GetLength(0), cols = dirty.GetLength(1), count = 0;
-            foreach (bool d in dirty) if (d) count++;
-            if (count == 0) return new List<Area>();
-            if (count * 2 > rows * cols) return new List<Area> { new(0, 0, width, height) }; // plus de la moitié a changé
-
+            int rows = dirty.GetLength(0), cols = dirty.GetLength(1);
             var result = new List<Area>();
             var open = new Dictionary<(int X, int W), int>();  // bande -> index dans result, sur la ligne précédente
             for (int ty = 0; ty < rows; ty++)

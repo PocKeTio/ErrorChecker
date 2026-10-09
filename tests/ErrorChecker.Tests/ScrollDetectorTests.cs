@@ -76,3 +76,38 @@ public class ScrollDetectorTests
         Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 3, 4, 5, 8, 9 }, Enumerable.Range(0, 10).Select(y => px[y * 16]));
     }
 }
+
+public class ScrollBesidePanelTests
+{
+    private const int W = 640, H = 480, Stride = W * 4;
+
+    // Éditeur VBA : explorateur de projet fixe (texte varié) sur 100 px, puis le code qui défile.
+    // 100 n'est pas un multiple de 64 : la zone modifiée alignée sur les tuiles commence à 64, dans le panneau.
+    private static byte[] Vbe(int scroll)
+    {
+        var px = new byte[Stride * H];
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                int i = y * Stride + x * 4;
+                int c = x < 100 ? (y % 16 < 10 && (x * 31 + y * 17) % 7 < 2 ? 0x000080 : 0xFFFFFF)
+                                : ((y + scroll) * 131 + x / 8 * 17) & 0xFFFFFF;
+                px[i] = (byte)c; px[i + 1] = (byte)(c >> 8); px[i + 2] = (byte)(c >> 16); px[i + 3] = 255;
+            }
+        return px;
+    }
+
+    [Fact]
+    public void Scroll_next_to_a_static_panel_is_detected()
+    {
+        var before = Vbe(0);
+        var after = Vbe(30);
+        var box = TileDiff.Bounds(TileDiff.DirtyTiles(before, after, W, H, Stride)!, W, H)!.Value;
+        Assert.Equal(64, box.X);   // la zone alignée déborde bien sur le panneau
+
+        var move = ScrollDetector.Detect(before, after, Stride, box);
+        Assert.NotNull(move);
+        Assert.Equal(100, move!.Value.X);
+        Assert.Equal(-30, move.Value.Dy);
+    }
+}

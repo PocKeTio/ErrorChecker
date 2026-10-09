@@ -51,7 +51,8 @@ namespace ErrorChecker.Core
             return code.ToString();
         }
 
-        // Supprime les sessions abandonnées (application fermée brutalement, etc.).
+        // Supprime les sessions abandonnées (application fermée brutalement, etc.) : sans écriture depuis maxAge.
+        // Une demande en attente écrit un signe de vie toutes les 2 s : elle n'est jamais concernée.
         public static void DeleteStale(string sharedFolder, TimeSpan maxAge)
         {
             var sessions = Path.Combine(sharedFolder, "sessions");
@@ -60,7 +61,8 @@ namespace ErrorChecker.Core
             {
                 try
                 {
-                    if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > maxAge) Directory.Delete(dir, true);
+                    var lastActivity = Directory.GetFiles(dir).Select(File.GetLastWriteTimeUtc).DefaultIfEmpty(Directory.GetCreationTimeUtc(dir)).Max();
+                    if (DateTime.UtcNow - lastActivity > maxAge) Directory.Delete(dir, true);
                 }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }

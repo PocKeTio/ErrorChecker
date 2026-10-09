@@ -34,6 +34,9 @@
         <!-- Demande envoyée, puis assistance en cours -->
         <StackPanel x:Name="SessionPanel" Visibility="Collapsed">
             <TextBlock x:Name="SessionStatus" TextWrapping="Wrap" FontSize="14" Margin="0,0,0,10" Foreground="#2C3E50"/>
+            <!-- Code sélectionnable : à dicter ou coller dans Teams si le mail ne part pas -->
+            <TextBox x:Name="CodeDisplay" IsReadOnly="True" BorderThickness="0" Background="Transparent" FontSize="20"
+                     FontFamily="Consolas" HorizontalAlignment="Center" Margin="0,0,0,10" Visibility="Collapsed"/>
             <Button x:Name="StopButton" Height="34" Click="StopButton_Click"/>
         </StackPanel>
     </StackPanel>

@@ -163,3 +163,42 @@ public class ChannelTests : IDisposable
         fs.Write(data);
     }
 }
+
+public class ChannelFaultTests
+{
+    [Fact]
+    public void After_a_failed_write_the_channel_refuses_further_writes()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "errorchecker-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            var writer = new ChannelWriter(dir, Channel.UserToHelper, key, create: true, segmentSize: 64);
+            File.Create(Path.Combine(dir, "u2h.0001.log")).Dispose();   // la rotation va échouer (fichier déjà là)
+            Assert.ThrowsAny<IOException>(() => writer.Write(new TextInput(new string('x', 100))));
+            var error = Assert.ThrowsAny<IOException>(() => writer.Write(new Bye("fin")));
+            Assert.Contains("interrompu", error.Message);
+            writer.Dispose();
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void Visible_bytes_grow_while_a_large_record_is_still_arriving()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "errorchecker-" + Guid.NewGuid());
+        Directory.CreateDirectory(dir);
+        try
+        {
+            Channel.Create(dir, Channel.UserToHelper);
+            using var reader = new ChannelReader(dir, Channel.UserToHelper, new byte[32]);
+            var path = Path.Combine(dir, "u2h.0000.log");
+            using (var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+                fs.Write(BitConverter.GetBytes(100_000).Concat(new byte[5000]).ToArray());   // début d'un gros enregistrement
+            Assert.Empty(reader.Poll());
+            Assert.Equal(5004, reader.Visible);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+}

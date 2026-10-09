@@ -57,6 +57,7 @@ namespace ErrorChecker.Core
         private int segment;
         private long offset;
         private long sequence;
+        private bool faulted;
 
         // create = true : crée le canal ; false : reprend un canal créé par l'autre côté (Channel.Create).
         public ChannelWriter(string folder, string name, byte[] key, bool create, long segmentSize = Channel.DefaultSegmentSize)
@@ -83,8 +84,19 @@ namespace ErrorChecker.Core
             var plaintexts = messages.Select(Protocol.Encode).ToList();
             lock (sync)
             {
-                WriteBatch(plaintexts);
-                if (offset >= segmentSize) NextSegment();
+                // Après un échec d'écriture, position et numéro d'ordre ne sont plus sûrs : le canal est
+                // abandonné (le pair verra un silence, pas des données « falsifiées »).
+                if (faulted) throw new IOException("Canal interrompu par une erreur d'écriture précédente.");
+                try
+                {
+                    WriteBatch(plaintexts);
+                    if (offset >= segmentSize) NextSegment();
+                }
+                catch
+                {
+                    faulted = true;
+                    throw;
+                }
             }
         }
 
@@ -144,6 +156,10 @@ namespace ErrorChecker.Core
         private int failures;
         private byte[] buffer = new byte[256 * 1024];
 
+        // Octets visibles dans le fichier, messages incomplets compris : progresse pendant l'arrivée
+        // d'une grosse image sur un réseau lent (signe de vie avant même qu'elle soit complète).
+        public long Visible { get; private set; }
+
         public ChannelReader(string folder, string name, byte[] key)
         {
             this.folder = folder;
@@ -162,6 +178,7 @@ namespace ErrorChecker.Core
             while (true)
             {
                 int filled = RandomAccess.Read(file, buffer, offset);
+                Visible = segment * Channel.DefaultSegmentSize + offset + filled;
                 int pos = 0, needed = 0;
                 bool nextSegment = false, retryLater = false;
                 while (filled - pos >= 4)

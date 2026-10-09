@@ -43,11 +43,11 @@ public class TileDiffTests
         Assert.Equal(new[] { new Area(0, 0, 128, 64), new Area(0, 64, 64, 64) }, Diff(Blank(), With((10, 10), (70, 10), (10, 70))));
 
     [Fact]
-    public void Mostly_changed_screen_is_sent_whole()
+    public void Mostly_changed_screen_still_sends_only_changed_tiles()
     {
-        // 4 x 3 = 12 tuiles, 7 modifiées
+        // 4 x 3 = 12 tuiles, 7 modifiées : les 5 autres (peut-être déjà nettes) ne sont pas renvoyées
         var changed = With((0, 0), (64, 0), (128, 0), (192, 0), (0, 64), (64, 64), (128, 64));
-        Assert.Equal(new[] { new Area(0, 0, W, H) }, Diff(Blank(), changed));
+        Assert.Equal(new[] { new Area(0, 0, W, 64), new Area(0, 64, 192, 64) }, Diff(Blank(), changed));
     }
 
     [Fact]

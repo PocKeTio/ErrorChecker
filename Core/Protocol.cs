@@ -25,7 +25,8 @@ namespace ErrorChecker.Core
     public sealed record KeyStroke(int Vk, int Modifiers) : Msg;
     public sealed record TextInput(string Text) : Msg;
     // Value : bouton (0 gauche, 1 droit, 2 milieu) ou delta de molette.
-    public sealed record MouseInput(MouseKind Action, int X, int Y, int Value) : Msg;
+    // Modifiers (ModifierKeys) : Ctrl+clic, Maj+clic, Ctrl+molette...
+    public sealed record MouseInput(MouseKind Action, int X, int Y, int Value, int Modifiers) : Msg;
     public enum MouseKind : byte { Move, Down, Up, Wheel }
 
     public static class Protocol
@@ -61,7 +62,7 @@ namespace ErrorChecker.Core
                     break;
                 case KeyStroke k: w.Write((byte)T.Key); w.Write(k.Vk); w.Write(k.Modifiers); break;
                 case TextInput t: w.Write((byte)T.Text); w.Write(t.Text); break;
-                case MouseInput m: w.Write((byte)T.Mouse); w.Write((byte)m.Action); w.Write(m.X); w.Write(m.Y); w.Write(m.Value); break;
+                case MouseInput m: w.Write((byte)T.Mouse); w.Write((byte)m.Action); w.Write(m.X); w.Write(m.Y); w.Write(m.Value); w.Write(m.Modifiers); break;
                 case Ack a: w.Write((byte)T.Ack); w.Write(a.Seq); break;
                 default: throw new ArgumentException($"Message inconnu : {msg.GetType().Name}");
             }
@@ -84,7 +85,7 @@ namespace ErrorChecker.Core
                 T.ScreenFrame => new ScreenFrame(r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), ReadMoves(r), ReadPatches(r)),
                 T.Key => new KeyStroke(r.ReadInt32(), r.ReadInt32()),
                 T.Text => new TextInput(r.ReadString()),
-                T.Mouse => new MouseInput((MouseKind)r.ReadByte(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32()),
+                T.Mouse => new MouseInput((MouseKind)r.ReadByte(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32()),
                 T.Ack => new Ack(r.ReadInt32()),
                 var t => throw new InvalidDataException($"Type de message inconnu : {t}")
             };

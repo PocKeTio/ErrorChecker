@@ -11,6 +11,7 @@ namespace ErrorChecker.Core
         // box : zone modifiée. Renvoie le défilement à appliquer à l'image précédente, ou null.
         public static Move? Detect(byte[] previous, byte[] current, int stride, Area box)
         {
+            box = Trim(previous, current, stride, box);
             if (box.H < 2 * MinRows) return null;
 
             // Lignes de l'image précédente au contenu unique. Les lignes unies ou répétées
@@ -49,6 +50,27 @@ namespace ErrorChecker.Core
             }
             if (matched < MinRows || matched * 2 < last - first + 1) return null;
             return new Move(box.X, first, box.W, last - first + 1, dy);
+        }
+
+        // Resserre la zone aux pixels réellement modifiés : alignée sur les tuiles, elle déborde souvent
+        // sur un panneau fixe voisin (explorateur de projet VBA...) qui empêcherait les lignes de correspondre.
+        private static Area Trim(byte[] previous, byte[] current, int stride, Area box)
+        {
+            int left = int.MaxValue, right = -1, top = -1, bottom = -1;
+            for (int y = box.Y; y < box.Y + box.H; y++)
+            {
+                var a = MemoryMarshal.Cast<byte, int>(Row(previous, stride, box, y));
+                var b = MemoryMarshal.Cast<byte, int>(Row(current, stride, box, y));
+                if (a.SequenceEqual(b)) continue;
+                int l = 0, r = a.Length - 1;
+                while (a[l] == b[l]) l++;
+                while (a[r] == b[r]) r--;
+                left = Math.Min(left, l);
+                right = Math.Max(right, r);
+                if (top < 0) top = y;
+                bottom = y;
+            }
+            return right < 0 ? box with { H = 0 } : new Area(box.X + left, top, right - left + 1, bottom - top + 1);
         }
 
         // Applique le défilement en place (même opération des deux côtés : image de référence et affichage).

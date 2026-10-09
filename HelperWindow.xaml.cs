@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -19,14 +20,12 @@ namespace ErrorChecker
 
         private readonly string code;
         private readonly CancellationTokenSource cts = new();
-        private readonly object pendingLock = new();
-        private readonly SemaphoreSlim pendingSignal = new(0);
+        private readonly Outbox outbox = new();
         private readonly DispatcherTimer statsTimer = new() { Interval = TimeSpan.FromSeconds(1) };
         private readonly HashSet<MouseButton> pressed = new();
         private Session? session;
         private ChannelWriter? writer;
         private ChannelReader? reader;
-        private List<Msg> pending = new();
         private WriteableBitmap? bitmap;
         private readonly FrameDecoder decoder = new(DecodeImage); // copie locale de l'écran de l'utilisateur
         private Point remoteCursor = new(-1, -1);
@@ -65,7 +64,7 @@ namespace ErrorChecker
                 writer?.Dispose();
                 var message = ex switch
                 {
-                    FileNotFoundException or DirectoryNotFoundException => "Session introuvable : l'utilisateur a annulé sa demande ou l'assistance est terminée.",
+                    FileNotFoundException or DirectoryNotFoundException => "Session introuvable : code erroné, demande annulée ou assistance déjà terminée.",
                     IOException when ex.HResult == unchecked((int)0x80070020) => "Un autre dépanneur a déjà rejoint cette session.", // violation de partage
                     _ => ex.Message
                 };
@@ -87,12 +86,15 @@ namespace ErrorChecker
         private async Task ReceiveLoop(CancellationToken token)
         {
             var lastReceived = DateTime.UtcNow;
+            long lastVisible = -1;
             try
             {
                 while (!token.IsCancellationRequested)
                 {
                     var messages = reader!.Poll();
-                    if (messages.Count > 0) lastReceived = DateTime.UtcNow;
+                    // Une grosse image qui arrive lentement compte comme signe de vie.
+                    if (messages.Count > 0 || reader.Visible != lastVisible) lastReceived = DateTime.UtcNow;
+                    lastVisible = reader.Visible;
                     foreach (var msg in messages) Handle(msg);
                     if (DateTime.UtcNow - lastReceived > PeerTimeout)
                     {
@@ -176,10 +178,14 @@ namespace ErrorChecker
         {
             using var ms = new MemoryStream(patch.Data);
             var image = BitmapDecoder.Create(ms, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0];
-            var pixels = new byte[patch.W * patch.H * 4];
-            new FormatConvertedBitmap(image, PixelFormats.Bgr32, null, 0).CopyPixels(pixels, patch.W * 4, 0);
-            for (int y = 0; y < patch.H; y++)
-                Buffer.BlockCopy(pixels, y * patch.W * 4, screen, (patch.Y + y) * stride + patch.X * 4, patch.W * 4);
+            var pixels = ArrayPool<byte>.Shared.Rent(patch.W * patch.H * 4);
+            try
+            {
+                new FormatConvertedBitmap(image, PixelFormats.Bgr32, null, 0).CopyPixels(pixels, patch.W * 4, 0);
+                for (int y = 0; y < patch.H; y++)
+                    Buffer.BlockCopy(pixels, y * patch.W * 4, screen, (patch.Y + y) * stride + patch.X * 4, patch.W * 4);
+            }
+            finally { ArrayPool<byte>.Shared.Return(pixels); }
         }
 
         private void UpdateCursor()
@@ -203,45 +209,17 @@ namespace ErrorChecker
                 + (roundTripMs >= 0 ? $" · aller-retour {roundTripMs:F0} ms" : "");
         }
 
-        // Envoi dès qu'il y a quelque chose ; ce qui arrive pendant une écriture part groupé dans la suivante.
         private async Task SendLoop(CancellationToken token)
         {
-            var lastPing = DateTime.MinValue;
             try
             {
-                while (!token.IsCancellationRequested)
-                {
-                    if (DateTime.UtcNow - lastPing > TimeSpan.FromSeconds(2))
-                    {
-                        Enqueue(new Ping(Stopwatch.GetTimestamp()));
-                        lastPing = DateTime.UtcNow;
-                    }
-                    List<Msg> batch;
-                    lock (pendingLock)
-                    {
-                        batch = pending;
-                        pending = new List<Msg>();
-                    }
-                    writer!.Write(batch);
-                    await pendingSignal.WaitAsync(TimeSpan.FromSeconds(1), token);
-                }
+                await outbox.RunAsync(writer!, () => new Ping(Stopwatch.GetTimestamp()), token);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { Fail(ex, token); }
         }
 
-        private void Enqueue(Msg msg)
-        {
-            lock (pendingLock)
-            {
-                // Mouvements de souris : seule la dernière position en attente compte.
-                if (msg is MouseInput { Action: MouseKind.Move } && pending.Count > 0 && pending[^1] is MouseInput { Action: MouseKind.Move })
-                    pending[^1] = msg;
-                else
-                    pending.Add(msg);
-            }
-            if (pendingSignal.CurrentCount == 0) pendingSignal.Release();
-        }
+        private void Enqueue(Msg msg) => outbox.Post(msg);
 
         private void Settings_Changed(object sender, SelectionChangedEventArgs e)
         {
@@ -290,7 +268,7 @@ namespace ErrorChecker
             if (ButtonIndex(e.ChangedButton) is not int button || !TryGetRemotePoint(e, out int x, out int y)) return;
             ScreenImage.CaptureMouse(); // le relâchement arrivera même hors de l'image
             pressed.Add(e.ChangedButton);
-            Enqueue(new MouseInput(MouseKind.Down, x, y, button));
+            Enqueue(new MouseInput(MouseKind.Down, x, y, button, (int)Keyboard.Modifiers));
             e.Handled = true;
         }
 
@@ -298,7 +276,7 @@ namespace ErrorChecker
         {
             if (!pressed.Remove(e.ChangedButton) || ButtonIndex(e.ChangedButton) is not int button) return;
             TryGetRemotePoint(e, out _, out _);
-            Enqueue(new MouseInput(MouseKind.Up, lastPoint.X, lastPoint.Y, button));
+            Enqueue(new MouseInput(MouseKind.Up, lastPoint.X, lastPoint.Y, button, (int)Keyboard.Modifiers));
             if (pressed.Count == 0) ScreenImage.ReleaseMouseCapture();
             e.Handled = true;
         }
@@ -307,13 +285,13 @@ namespace ErrorChecker
         {
             var previous = lastPoint;
             if (TryGetRemotePoint(e, out int x, out int y) && (x, y) != previous)
-                Enqueue(new MouseInput(MouseKind.Move, x, y, 0));
+                Enqueue(new MouseInput(MouseKind.Move, x, y, 0, (int)Keyboard.Modifiers));
         }
 
         private void ScreenImage_MouseWheel(object sender, MouseWheelEventArgs e)
         {
             if (!TryGetRemotePoint(e, out int x, out int y)) return;
-            Enqueue(new MouseInput(MouseKind.Wheel, x, y, e.Delta));
+            Enqueue(new MouseInput(MouseKind.Wheel, x, y, e.Delta, (int)Keyboard.Modifiers));
             e.Handled = true;
         }
 
@@ -321,7 +299,7 @@ namespace ErrorChecker
         private void ScreenImage_LostMouseCapture(object sender, MouseEventArgs e)
         {
             foreach (var button in pressed)
-                Enqueue(new MouseInput(MouseKind.Up, lastPoint.X, lastPoint.Y, ButtonIndex(button)!.Value));
+                Enqueue(new MouseInput(MouseKind.Up, lastPoint.X, lastPoint.Y, ButtonIndex(button)!.Value, 0));
             pressed.Clear();
         }
 

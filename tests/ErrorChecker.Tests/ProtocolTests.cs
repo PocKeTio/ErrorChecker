@@ -6,7 +6,7 @@ public class ProtocolTests
     public static TheoryData<Msg> SimpleMessages => new()
     {
         new Ping(long.MaxValue), new Pong(-1), new Bye("Fin à 12h"), new Join("Jean (PC-42)"), new Refuse(),
-        new Settings(5, 0, 1), new KeyStroke(0x77, 4), new Ack(42), new TextInput("é€😀\n\t"), new MouseInput(MouseKind.Wheel, 10, 20, -120),
+        new Settings(5, 0, 1), new KeyStroke(0x77, 4), new Ack(42), new TextInput("é€😀\n\t"), new MouseInput(MouseKind.Wheel, 10, 20, -120, 2), new MouseInput(MouseKind.Down, 1, 2, 0, 4),
     };
 
     [Theory]

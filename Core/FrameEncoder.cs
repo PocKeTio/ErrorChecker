@@ -51,7 +51,7 @@ namespace ErrorChecker.Core
             if (dirty == null || lossySince?.GetLength(0) != rows || lossySince.GetLength(1) != cols) lossySince = new long[rows, cols];
 
             var moves = new List<Move>();
-            if (dirty != null && TileDiff.Bounds(dirty, w, h) is Area box && box.H >= BandHeight
+            if (dirty != null && TileDiff.Bounds(dirty, w, h) is Area box && LooksLikeScroll(dirty, box)
                 && ScrollDetector.Detect(previous!, current, stride, box) is Move move)
             {
                 ScrollDetector.Apply(previous!, stride, move);
@@ -115,6 +115,21 @@ namespace ErrorChecker.Core
                 result.Add((new Patch(rich.X, rich.Y, rich.W, rich.H, data), lossy));
                 richStart = -1;
             }
+        }
+
+        // Un défilement modifie l'essentiel d'une grande zone ; deux tuiles éloignées (curseur qui clignote,
+        // horloge) donnent une grande zone englobante presque vide : inutile d'y chercher un défilement.
+        private static bool LooksLikeScroll(bool[,] dirty, Area box)
+        {
+            if (box.H < BandHeight) return false;
+            int count = 0, total = 0;
+            for (int ty = box.Y / Tile; ty <= (box.Y + box.H - 1) / Tile; ty++)
+                for (int tx = box.X / Tile; tx <= (box.X + box.W - 1) / Tile; tx++)
+                {
+                    total++;
+                    if (dirty[ty, tx]) count++;
+                }
+            return count >= 4 && count * 3 >= total;
         }
 
         // Grandes zones découpées en bandes : encodage parallèle ici, décodage parallèle chez le dépanneur.

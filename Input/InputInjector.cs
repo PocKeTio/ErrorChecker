@@ -10,16 +10,12 @@ namespace ErrorChecker.Input
     public static class InputInjector
     {
         private static readonly HashSet<int> pressedButtons = new();
+        private static ModifierKeys heldModifiers; // tenus pendant un clic ou un glisser (Ctrl+clic, Maj+glisser...)
 
         // Touche avec ses modificateurs. Ex. Maj+F8 : Maj enfoncée, F8 enfoncée puis relâchée, Maj relâchée.
         public static void Key(int vk, ModifierKeys modifiers)
         {
-            var mods = new List<ushort>();
-            if (modifiers.HasFlag(ModifierKeys.Control)) mods.Add(VK_CONTROL);
-            if (modifiers.HasFlag(ModifierKeys.Alt)) mods.Add(VK_MENU);
-            if (modifiers.HasFlag(ModifierKeys.Shift)) mods.Add(VK_SHIFT);
-            if (modifiers.HasFlag(ModifierKeys.Windows)) mods.Add(VK_LWIN);
-
+            var mods = ModifierVks(modifiers);
             var inputs = mods.Select(m => KeyInput(m, up: false)).ToList();
             inputs.Add(KeyInput((ushort)vk, up: false));
             inputs.Add(KeyInput((ushort)vk, up: true));
@@ -47,44 +43,76 @@ namespace ErrorChecker.Input
             Send(inputs);
         }
 
-        // x, y : coordonnées écran en pixels physiques.
-        public static void Mouse(MouseKind action, int x, int y, int value)
+        // x, y : coordonnées écran en pixels physiques. modifiers : tenus pendant le clic, le glisser ou la molette.
+        public static void Mouse(MouseKind action, int x, int y, int value, ModifierKeys modifiers)
         {
             SetCursorPos(x, y);
-            switch (action)
-            {
-                case MouseKind.Down:
-                    lock (pressedButtons) pressedButtons.Add(value);
-                    Send(new List<INPUT> { MouseButton(value, down: true) });
-                    break;
-                case MouseKind.Up:
-                    lock (pressedButtons) pressedButtons.Remove(value);
-                    Send(new List<INPUT> { MouseButton(value, down: false) });
-                    break;
-                case MouseKind.Wheel:
-                    Send(new List<INPUT> { MouseEvent(MOUSEEVENTF_WHEEL, unchecked((uint)value)) });
-                    break;
-            }
-        }
-
-        // Fin de session : ne jamais laisser un bouton de souris enfoncé chez l'utilisateur.
-        public static void ReleaseMouseButtons()
-        {
-            List<int> buttons;
             lock (pressedButtons)
             {
-                buttons = pressedButtons.ToList();
-                pressedButtons.Clear();
+                bool dragging = pressedButtons.Count > 0;
+                // Simple survol : rien à tenir (sinon Ctrl serait pressé/relâché à chaque mouvement).
+                var inputs = action == MouseKind.Move && !dragging ? new List<INPUT>() : SyncModifiers(modifiers);
+                switch (action)
+                {
+                    case MouseKind.Down:
+                        pressedButtons.Add(value);
+                        inputs.Add(MouseButton(value, down: true));
+                        break;
+                    case MouseKind.Up:
+                        pressedButtons.Remove(value);
+                        inputs.Add(MouseButton(value, down: false));
+                        break;
+                    case MouseKind.Wheel:
+                        inputs.Add(MouseEvent(MOUSEEVENTF_WHEEL, unchecked((uint)value)));
+                        break;
+                }
+                if (pressedButtons.Count == 0) inputs.AddRange(SyncModifiers(ModifierKeys.None));
+                Send(inputs);
             }
-            if (buttons.Count > 0) Send(buttons.Select(b => MouseButton(b, down: false)).ToList());
         }
 
-        private static INPUT MouseButton(int button, bool down) => MouseEvent(button switch
+        // Fin de session : ne jamais laisser un bouton ni une touche enfoncés chez l'utilisateur.
+        public static void ReleaseMouseButtons()
         {
-            1 => down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP,
-            2 => down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP,
-            _ => down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP
-        }, 0);
+            lock (pressedButtons)
+            {
+                var inputs = pressedButtons.Select(b => MouseButton(b, down: false)).ToList();
+                pressedButtons.Clear();
+                inputs.AddRange(SyncModifiers(ModifierKeys.None));
+                Send(inputs);
+            }
+        }
+
+        // Enfonce/relâche ce qui diffère entre les modificateurs tenus et ceux demandés.
+        private static List<INPUT> SyncModifiers(ModifierKeys wanted)
+        {
+            var inputs = ModifierVks(wanted & ~heldModifiers).Select(vk => KeyInput(vk, up: false)).ToList();
+            inputs.AddRange(ModifierVks(heldModifiers & ~wanted).Select(vk => KeyInput(vk, up: true)));
+            heldModifiers = wanted;
+            return inputs;
+        }
+
+        private static List<ushort> ModifierVks(ModifierKeys modifiers)
+        {
+            var vks = new List<ushort>();
+            if (modifiers.HasFlag(ModifierKeys.Control)) vks.Add(VK_CONTROL);
+            if (modifiers.HasFlag(ModifierKeys.Alt)) vks.Add(VK_MENU);
+            if (modifiers.HasFlag(ModifierKeys.Shift)) vks.Add(VK_SHIFT);
+            if (modifiers.HasFlag(ModifierKeys.Windows)) vks.Add(VK_LWIN);
+            return vks;
+        }
+
+        // Boutons inversés (gaucher) : SendInput parle de boutons physiques, Windows applique l'inversion.
+        private static INPUT MouseButton(int button, bool down)
+        {
+            if (GetSystemMetrics(SM_SWAPBUTTON) != 0 && button is 0 or 1) button = 1 - button;
+            return MouseEvent(button switch
+            {
+                1 => down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP,
+                2 => down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP,
+                _ => down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP
+            }, 0);
+        }
 
         private static INPUT MouseEvent(uint flags, uint data) =>
             new() { type = INPUT_MOUSE, u = new InputUnion { mi = new MOUSEINPUT { dwFlags = flags, mouseData = data } } };
@@ -151,5 +179,10 @@ namespace ErrorChecker.Input
 
         [DllImport("user32.dll")]
         private static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetrics(int nIndex);
+
+        private const int SM_SWAPBUTTON = 23;
     }
 }
