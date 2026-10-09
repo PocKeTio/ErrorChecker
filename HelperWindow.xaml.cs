@@ -229,8 +229,8 @@ namespace ErrorChecker
         private void SendSettings()
         {
             int fps = int.Parse((string)((ComboBoxItem)FpsBox.SelectedItem).Content);
-            int quality = int.Parse((string)((ComboBoxItem)QualityBox.SelectedItem).Tag);
-            Enqueue(new Settings(fps, quality, ScreenBox.SelectedIndex));
+            var tag = ((string)((ComboBoxItem)QualityBox.SelectedItem).Tag).Split(',');
+            Enqueue(new Settings(fps, int.Parse(tag[0]), ScreenBox.SelectedIndex, tag[1] == "1"));
         }
 
         private void RealSize_Changed(object sender, RoutedEventArgs e)

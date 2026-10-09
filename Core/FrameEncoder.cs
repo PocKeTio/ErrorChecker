@@ -16,6 +16,10 @@ namespace ErrorChecker.Core
     public sealed class FrameEncoder
     {
         public const int BandHeight = 2 * Tile;
+        // Affinage des zones riches : JPEG presque sans perte, 4,5 fois plus léger qu'un PNG (mesuré).
+        public const int RefineQuality = 90;
+        // Au-delà, une palette coûte cher (ciel, dégradé photo à peu de couleurs) : on tente le JPEG.
+        private const double CostlyPaletteBytesPerPixel = 0.25;
         private const int Tile = TileDiff.TileSize;
         private const int MaxRefineTilesPerFrame = 48;
 
@@ -39,12 +43,13 @@ namespace ErrorChecker.Core
         public void Reset() => previous = null;
 
         // fill : copie la capture (BGRA, stride octets par ligne) dans le tampon fourni.
-        // Renvoie null si rien n'a bougé depuis l'appel précédent.
-        public ScreenFrame? Encode(int w, int h, int stride, Action<byte[]> fill, int cursorX, int cursorY, int quality, int seq, int lagMs)
+        // reduceColors : mode économie (couleurs 5-6-5). Renvoie null si rien n'a bougé depuis l'appel précédent.
+        public ScreenFrame? Encode(int w, int h, int stride, Action<byte[]> fill, int cursorX, int cursorY, int quality, bool reduceColors, int seq, int lagMs)
         {
             if (size != (w, h)) { size = (w, h); previous = null; }
             if (current?.Length != stride * h) current = new byte[stride * h];
             fill(current);
+            if (reduceColors) ReduceColors(current);
 
             long now = clock();
             int rows = (h + Tile - 1) / Tile, cols = (w + Tile - 1) / Tile;
@@ -66,18 +71,23 @@ namespace ErrorChecker.Core
             (previous, current) = (current, previous);
             var pixels = previous;
 
-            var pieces = new List<(Area Area, int Quality)>();
+            // Final : rendu définitif (affinage), la tuile ne sera plus renvoyée tant qu'elle ne change pas.
+            var pieces = new List<(Area Area, int Quality, bool Final)>();
             foreach (var area in changed)
-                pieces.AddRange(Bands(area).Select(b => (b, quality)));
+                pieces.AddRange(Bands(area).Select(b => (b, quality, false)));
             if (dirty != null)
                 foreach (var area in RefineAreas(dirty, now, w, h))
-                    pieces.AddRange(Bands(area).Select(b => (b, 0)));
+                    pieces.AddRange(Bands(area).Select(b => (b, quality > 0 ? RefineQuality : 0, true)));
 
             if (pieces.Count == 0 && moves.Count == 0 && (cursorX, cursorY) == lastCursor) return null;
             lastCursor = (cursorX, cursorY);
 
             var encoded = new List<(Patch Patch, bool Lossy)>[pieces.Count];
-            Parallel.For(0, pieces.Count, i => encoded[i] = EncodePiece(pixels, stride, pieces[i].Area, pieces[i].Quality));
+            Parallel.For(0, pieces.Count, i =>
+            {
+                var (area, q, final) = pieces[i];
+                encoded[i] = EncodePiece(pixels, stride, area, q).Select(e => (e.Item1, e.Item2 && !final)).ToList();
+            });
             var patches = encoded.SelectMany(e => e).ToList();
 
             // Une tuile n'est nette que si une zone sans perte la recouvre entièrement ; recouverte en partie,
@@ -97,9 +107,9 @@ namespace ErrorChecker.Core
         private List<(Patch, bool)> EncodePiece(byte[] pixels, int stride, Area a, int quality)
         {
             var result = new List<(Patch, bool)>();
-            if (PaletteCodec.Encode(pixels, stride, a) is byte[] whole)
+            if (PaletteOrCheaper(pixels, stride, a, quality) is var (wholeData, wholeLossy))
             {
-                result.Add((new Patch(a.X, a.Y, a.W, a.H, whole), false));
+                result.Add((new Patch(a.X, a.Y, a.W, a.H, wholeData), wholeLossy));
                 return result;
             }
             var run = new HashSet<int>();
@@ -127,7 +137,8 @@ namespace ErrorChecker.Core
             {
                 if (runStart < 0) return;
                 var area = a with { X = runStart, W = end - runStart };
-                result.Add((new Patch(area.X, area.Y, area.W, area.H, PaletteCodec.Encode(pixels, stride, area)!), false));
+                var (data, lossy) = PaletteOrCheaper(pixels, stride, area, quality)!.Value;   // <= 256 couleurs par construction
+                result.Add((new Patch(area.X, area.Y, area.W, area.H, data), lossy));
                 run.Clear();
                 runStart = -1;
             }
@@ -139,6 +150,35 @@ namespace ErrorChecker.Core
                 var (data, lossy) = encodeRichArea(pixels, stride, rich, quality);
                 result.Add((new Patch(rich.X, rich.Y, rich.W, rich.H, data), lossy));
                 richStart = -1;
+            }
+        }
+
+        // Palette sans perte, sauf si elle coûte cher (photo à peu de couleurs) et qu'un JPEG fait au moins 2 fois
+        // moins : ne se déclenche jamais sur du texte ou une interface (mesuré), réduit fortement les fonds photo.
+        private (byte[] Data, bool Lossy)? PaletteOrCheaper(byte[] pixels, int stride, Area a, int quality)
+        {
+            var palette = PaletteCodec.Encode(pixels, stride, a);
+            if (palette == null) return null;
+            if (quality > 0 && palette.Length > CostlyPaletteBytesPerPixel * a.W * a.H)
+            {
+                var rich = encodeRichArea(pixels, stride, a, quality);
+                if (rich.Data.Length * 2 <= palette.Length) return rich;
+            }
+            return (palette, false);
+        }
+
+        // Mode économie : couleurs ramenées à 5-6-5 bits (écart maximal 7/255, blanc et noir exacts grâce à la
+        // recopie des bits de poids fort). Bien plus de zones tiennent alors dans la palette : -16 % mesuré.
+        private static readonly byte[] Five = Enumerable.Range(0, 256).Select(v => (byte)((v >> 3 << 3) | (v >> 5))).ToArray();
+        private static readonly byte[] Six = Enumerable.Range(0, 256).Select(v => (byte)((v >> 2 << 2) | (v >> 6))).ToArray();
+
+        private static void ReduceColors(byte[] pixels)
+        {
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                pixels[i] = Five[pixels[i]];
+                pixels[i + 1] = Six[pixels[i + 1]];
+                pixels[i + 2] = Five[pixels[i + 2]];
             }
         }
 

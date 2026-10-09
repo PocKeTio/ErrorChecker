@@ -45,7 +45,7 @@ public class FrameRoundTripTests
 
     private ScreenFrame? Send(FrameEncoder encoder, FrameDecoder decoder, byte[] capture, int quality, ref int seq)
     {
-        var frame = encoder.Encode(W, H, Stride, b => capture.CopyTo(b, 0), 10, 10, quality, seq + 1, 0);
+        var frame = encoder.Encode(W, H, Stride, b => capture.CopyTo(b, 0), 10, 10, quality, false, seq + 1, 0);
         if (frame == null) return null;
         seq++;
         frame = (ScreenFrame)Protocol.Decode(Protocol.Encode(frame));   // passe par le vrai format
@@ -123,7 +123,7 @@ public class FrameRoundTripTests
         var scrolled = Send(encoder, decoder, Screen(40), 0, ref seq)!;
 
         var repaint = new FrameEncoder(RawEncode);
-        repaint.Encode(W, H, Stride, b => Screen(0).CopyTo(b, 0), 0, 0, 0, 1, 0);
+        repaint.Encode(W, H, Stride, b => Screen(0).CopyTo(b, 0), 0, 0, 0, false, 1, 0);
         int movedArea = scrolled.Patches.Sum(p => p.W * p.H);
         Assert.True(movedArea < W * H / 4, $"{movedArea} pixels renvoyés malgré le défilement");
     }
@@ -132,10 +132,10 @@ public class FrameRoundTripTests
     public void Resolution_change_restarts_with_a_full_frame()
     {
         var encoder = new FrameEncoder(RawEncode);
-        encoder.Encode(W, H, Stride, b => Screen(0).CopyTo(b, 0), 0, 0, 0, 1, 0);
+        encoder.Encode(W, H, Stride, b => Screen(0).CopyTo(b, 0), 0, 0, 0, false, 1, 0);
         var small = new byte[320 * 4 * 200];
         Array.Fill(small, (byte)255);
-        var frame = encoder.Encode(320, 200, 320 * 4, b => small.CopyTo(b, 0), 0, 0, 0, 2, 0)!;
+        var frame = encoder.Encode(320, 200, 320 * 4, b => small.CopyTo(b, 0), 0, 0, 0, false, 2, 0)!;
         Assert.Equal(320 * 200, frame.Patches.Sum(p => p.W * p.H));
     }
 }

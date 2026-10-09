@@ -33,7 +33,7 @@ namespace ErrorChecker
             public readonly CancellationTokenSource Cts = new();
             public readonly Outbox Outbox = new();
             public readonly long[] SentAt = new long[16];
-            public volatile Settings Settings = new(Fps: 5, Quality: 60, Screen: -1); // = réglages par défaut du dépanneur
+            public volatile Settings Settings = new(Fps: 5, Quality: 60, Screen: -1, ReduceColors: false); // = réglages par défaut du dépanneur
             public volatile bool Joined;
             public volatile bool Accepted;
             public volatile int LagMs;
@@ -294,7 +294,7 @@ namespace ErrorChecker
                         var bounds = screenManager.GetCurrentScreenBounds();
                         var cursor = System.Windows.Forms.Cursor.Position;
                         using var screenshot = screenManager.CaptureScreen();
-                        frame = encoder.Encode(screenshot, new System.Drawing.Point(cursor.X - bounds.X, cursor.Y - bounds.Y), settings.Quality, s.SentSeq + 1, s.LagMs);
+                        frame = encoder.Encode(screenshot, new System.Drawing.Point(cursor.X - bounds.X, cursor.Y - bounds.Y), settings.Quality, settings.ReduceColors, s.SentSeq + 1, s.LagMs);
                         blocked = false;
                     }
                     catch (Win32Exception ex)

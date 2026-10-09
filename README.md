@@ -49,6 +49,9 @@ Réglages côté dépanneur : écran, cadence maximale (1 à 15 images/s), quali
 seule** si le réseau ou le poste ne suit pas (au plus 2 images en attente d'affichage) : pas de retard qui
 s'accumule. La barre d'état affiche images/s, débit, retard image et aller-retour.
 
+Si ça rame malgré tout : d'abord baisser la cadence, puis passer la qualité en « Économie » (couleurs très
+légèrement réduites, texte toujours net). « Sans perte » : aucun JPEG, pixels exacts.
+
 ## Comment ça marche (et pourquoi c'est léger)
 
 - **Transport** : un fichier journal par sens, lu au fil de l'eau via un handle ouvert (pas de liste de dossier,
@@ -60,8 +63,8 @@ s'accumule. La barre d'état affiche images/s, débit, retard image et aller-ret
   immobile est renvoyée nette après 0,7 s ; encodage et décodage en parallèle.
 
   Mesuré sur 16 captures réelles (Excel, éditeurs VBA/SQL, dialogues, Outlook, web, fonds photo ; JPEG d'ImageSharp
-  en remplacement de GDI+) : image complète ≈ 63 Ko en moyenne, saisie dans une cellule ≈ 330 octets,
-  défilement de 20 px ≈ 4 Ko.
+  en remplacement de GDI+) : image complète ≈ 57 Ko en moyenne (53 Ko en « Économie »), saisie dans une cellule
+  ≈ 320 octets, défilement de 20 px ≈ 3 Ko.
 - **Réactivité** : capture rapprochée juste après un clic ou une touche du dépanneur ; envoi immédiat des actions.
 
 ## Limites

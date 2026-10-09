@@ -11,8 +11,9 @@ namespace ErrorChecker.Core
     public sealed record Join(string Helper) : Msg;
     public sealed record Accept(int Primary, string[] Screens) : Msg;
     public sealed record Refuse : Msg;
-    // Quality : 0 = PNG (net, sans perte), sinon qualité JPEG 1-100.
-    public sealed record Settings(int Fps, int Quality, int Screen) : Msg;
+    // Quality : 0 = tout sans perte, sinon qualité JPEG 1-100 des zones riches.
+    // ReduceColors : mode économie, couleurs 5-6-5 (presque invisible, bien plus compressible).
+    public sealed record Settings(int Fps, int Quality, int Screen, bool ReduceColors) : Msg;
     // Seq : numéro acquitté par le dépanneur (Ack) une fois l'image affichée.
     // LagMs : délai capture -> affichage mesuré côté utilisateur sur les images précédentes.
     // Moves (défilements) s'appliquent à l'image précédente, avant les Patches.
@@ -48,7 +49,7 @@ namespace ErrorChecker.Core
                     foreach (var s in a.Screens) w.Write(s);
                     break;
                 case Refuse: w.Write((byte)T.Refuse); break;
-                case Settings s: w.Write((byte)T.Settings); w.Write(s.Fps); w.Write(s.Quality); w.Write(s.Screen); break;
+                case Settings s: w.Write((byte)T.Settings); w.Write(s.Fps); w.Write(s.Quality); w.Write(s.Screen); w.Write(s.ReduceColors); break;
                 case ScreenFrame f:
                     w.Write((byte)T.ScreenFrame); w.Write(f.Seq); w.Write(f.Width); w.Write(f.Height); w.Write(f.CursorX); w.Write(f.CursorY); w.Write(f.LagMs);
                     w.Write(f.Moves.Length);
@@ -81,7 +82,7 @@ namespace ErrorChecker.Core
                 T.Join => new Join(r.ReadString()),
                 T.Accept => new Accept(r.ReadInt32(), ReadStrings(r)),
                 T.Refuse => new Refuse(),
-                T.Settings => new Settings(r.ReadInt32(), r.ReadInt32(), r.ReadInt32()),
+                T.Settings => new Settings(r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadBoolean()),
                 T.ScreenFrame => new ScreenFrame(r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), ReadMoves(r), ReadPatches(r)),
                 T.Key => new KeyStroke(r.ReadInt32(), r.ReadInt32()),
                 T.Text => new TextInput(r.ReadString()),

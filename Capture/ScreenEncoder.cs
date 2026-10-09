@@ -15,13 +15,13 @@ namespace ErrorChecker.Capture
 
         public void Reset() => frames.Reset();
 
-        public ScreenFrame? Encode(Bitmap screenshot, Point cursor, int quality, int seq, int lagMs)
+        public ScreenFrame? Encode(Bitmap screenshot, Point cursor, int quality, bool reduceColors, int seq, int lagMs)
         {
             var data = screenshot.LockBits(new Rectangle(0, 0, screenshot.Width, screenshot.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
             try
             {
                 return frames.Encode(screenshot.Width, screenshot.Height, data.Stride,
-                    buffer => Marshal.Copy(data.Scan0, buffer, 0, buffer.Length), cursor.X, cursor.Y, quality, seq, lagMs);
+                    buffer => Marshal.Copy(data.Scan0, buffer, 0, buffer.Length), cursor.X, cursor.Y, quality, reduceColors, seq, lagMs);
             }
             finally { screenshot.UnlockBits(data); }
         }
