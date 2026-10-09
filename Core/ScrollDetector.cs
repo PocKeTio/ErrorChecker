@@ -37,10 +37,12 @@ namespace ErrorChecker.Core
                 if (known && from < 0) continue;   // ligne répétée (liste, grille) : ni voix, ni dans le seuil
                 candidates++;
                 if (known && from != y)
-                    votes[y - from] = votes.GetValueOrDefault(y - from) + 1;
+                    votes[y - from] = (votes.TryGetValue(y - from, out int n) ? n : 0) + 1;
             }
             if (votes.Count == 0) return null;
-            var (dy, count) = votes.MaxBy(v => v.Value);
+            int dy = 0, count = 0;
+            foreach (var v in votes)
+                if (v.Value > count) (dy, count) = (v.Key, v.Value);
             if (count < Math.Max(MinRows, candidates / 4)) return null;
 
             // Étendue : lignes identiques à la ligne précédente décalée de dy (source et destination dans la zone).
@@ -80,11 +82,13 @@ namespace ErrorChecker.Core
             return true;
         }
 
+        // FNV-1a sur des mots de 32 bits : rapide, et les collisions sont sans conséquence (les lignes retenues
+        // sont ensuite comparées octet par octet).
         private static int Hash(ReadOnlySpan<byte> row)
         {
-            var hash = new HashCode();
-            hash.AddBytes(row);
-            return hash.ToHashCode();
+            uint hash = 2166136261;
+            foreach (int word in MemoryMarshal.Cast<byte, int>(row)) hash = (hash ^ (uint)word) * 16777619;
+            return (int)hash;
         }
     }
 }

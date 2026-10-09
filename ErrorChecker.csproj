@@ -2,7 +2,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>WinExe</OutputType>
-        <TargetFramework>net6.0-windows</TargetFramework>
+        <!-- .NET Framework 4.8 : intégré à Windows 11 et Windows 10 >= 1903, rien à installer sur ces postes
+             (Windows 10 LTSC 2019 et plus anciens : installer 4.8 via Windows Update / WSUS) -->
+        <TargetFramework>net48</TargetFramework>
+        <LangVersion>10.0</LangVersion>
         <UseWPF>true</UseWPF>
         <UseWindowsForms>true</UseWindowsForms>
         <ImplicitUsings>enable</ImplicitUsings>
@@ -14,12 +17,17 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Reference Include="Microsoft.CSharp" />   <!-- dynamic (automation Outlook) -->
+    </ItemGroup>
+
+    <ItemGroup>
         <!-- Le projet de tests a son propre .csproj -->
         <Compile Remove="tests/**" />
         <None Remove="tests/**" />
         <!-- WinForms ne sert qu'à la capture d'écran : pas d'usings implicites qui entrent en conflit avec WPF -->
         <Using Remove="System.Windows.Forms" />
         <Using Remove="System.Drawing" />
+        <Using Remove="System.Net.Http" />
         <None Update="ErrorChecker.json" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
@@ -28,6 +36,10 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="7.0.0" />
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="7.0.0" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+        <!-- Span, MemoryMarshal, ArrayPool (intégrés à .NET 6, paquet officiel pour .NET Framework) -->
+        <PackageReference Include="System.Memory" Version="4.5.5" />
+        <!-- Index/Range, records... pour C# 10 sur .NET Framework : généré à la compilation, aucune DLL livrée -->
+        <PackageReference Include="PolySharp" Version="1.14.1" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers" />
         <PackageReference Include="System.Drawing.Common" Version="6.0.0" />
         <PackageReference Include="System.Security.Cryptography.Algorithms" Version="4.3.1" />
     </ItemGroup>

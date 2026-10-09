@@ -1,7 +1,5 @@
 using System.Buffers.Binary;
 using System.IO;
-using System.Security.Cryptography;
-using Microsoft.Win32.SafeHandles;
 
 namespace ErrorChecker.Core
 {
@@ -16,7 +14,7 @@ namespace ErrorChecker.Core
     //    clics, acquittements) part en une seule requête : une lecture concurrente incomplète échoue au
     //    déchiffrement et est simplement relue au sondage suivant.
     //
-    // Enregistrement : [longueur u32][message chiffré AES-GCM][tag 16 octets].
+    // Enregistrement : [longueur u32][message chiffré][tag 16 octets] (AES-CTR + HMAC-SHA256, RecordCipher).
     // Le nonce n'est pas stocké : il vaut (canal, numéro d'ordre). Un enregistrement rejoué,
     // déplacé ou modifié fait donc échouer le déchiffrement.
     // Un message vide marque le passage au segment suivant (fichiers limités en taille).
@@ -25,7 +23,7 @@ namespace ErrorChecker.Core
         public const string UserToHelper = "u2h";
         public const string HelperToUser = "h2u";
         public const long DefaultSegmentSize = 32L * 1024 * 1024;
-        internal const int TagSize = 16;
+        internal const int TagSize = RecordCipher.TagSize;
         internal const int MaxRecordSize = 64 * 1024 * 1024;
         // Jusqu'à cette taille, le client SMB envoie l'écriture en une seule requête, appliquée d'un bloc.
         internal const int SingleWriteLimit = 64 * 1024;
@@ -43,7 +41,11 @@ namespace ErrorChecker.Core
 
         // Crée le premier segment, vide, pour que le lecteur puisse l'ouvrir avant que l'écrivain n'arrive.
         public static void Create(string folder, string name) =>
-            File.OpenHandle(SegmentPath(folder, name, 0), FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete).Dispose();
+            Open(SegmentPath(folder, name, 0), FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete).Dispose();
+
+        // Sans tampon (bufferSize 1) : chaque lecture ou écriture va directement au fichier, rien n'est gardé en mémoire.
+        internal static FileStream Open(string path, FileMode mode, FileAccess access, FileShare share) =>
+            new(path, mode, access, share, bufferSize: 1);
     }
 
     public sealed class ChannelWriter : IDisposable
@@ -52,8 +54,8 @@ namespace ErrorChecker.Core
         private readonly string folder;
         private readonly string name;
         private readonly long segmentSize;
-        private readonly AesGcm aes;
-        private SafeFileHandle file;
+        private readonly RecordCipher cipher;
+        private FileStream file;
         private int segment;
         private long offset;
         private long sequence;
@@ -66,14 +68,14 @@ namespace ErrorChecker.Core
             this.name = name;
             this.segmentSize = segmentSize;
             // Pas de partage en écriture : un second écrivain (lien ouvert deux fois) est refusé.
-            file = File.OpenHandle(Channel.SegmentPath(folder, name, 0), create ? FileMode.CreateNew : FileMode.Open,
+            file = Channel.Open(Channel.SegmentPath(folder, name, 0), create ? FileMode.CreateNew : FileMode.Open,
                 FileAccess.Write, FileShare.Read | FileShare.Delete);
-            if (RandomAccess.GetLength(file) != 0)
+            if (file.Length != 0)
             {
                 file.Dispose();
                 throw new InvalidOperationException("Cette session a déjà été utilisée. Il faut une nouvelle demande d'aide.");
             }
-            aes = new AesGcm(key);
+            cipher = new RecordCipher(key);
         }
 
         public void Write(params Msg[] messages) => Write((IReadOnlyList<Msg>)messages);
@@ -107,24 +109,32 @@ namespace ErrorChecker.Core
             foreach (var p in plaintexts)
             {
                 BinaryPrimitives.WriteInt32LittleEndian(batch.AsSpan(pos), p.Length + Channel.TagSize);
-                aes.Encrypt(Channel.Nonce(name, sequence++), p, batch.AsSpan(pos + 4, p.Length), batch.AsSpan(pos + 4 + p.Length, Channel.TagSize));
+                cipher.Encrypt(Channel.Nonce(name, sequence++), p, batch, pos + 4);
                 pos += 4 + p.Length + Channel.TagSize;
             }
             if (batch.Length <= Channel.SingleWriteLimit)
-                RandomAccess.Write(file, batch, offset);   // un aller-retour réseau au lieu de deux
+                WriteAt(batch, 0, batch.Length, offset);   // un aller-retour réseau au lieu de deux
             else
             {
-                var header = batch[..4];
-                batch.AsSpan(0, 4).Clear();
-                RandomAccess.Write(file, batch, offset);   // le lot, invisible tant que son en-tête vaut 0...
-                RandomAccess.Write(file, header, offset);  // ...puis l'en-tête : le lot apparaît d'un seul coup
+                var header = new byte[4];
+                Buffer.BlockCopy(batch, 0, header, 0, 4);
+                Array.Clear(batch, 0, 4);
+                WriteAt(batch, 0, batch.Length, offset);   // le lot, invisible tant que son en-tête vaut 0...
+                WriteAt(header, 0, 4, offset);             // ...puis l'en-tête : le lot apparaît d'un seul coup
             }
             offset += batch.Length;
         }
 
+        private void WriteAt(byte[] data, int start, int count, long position)
+        {
+            file.Position = position;
+            file.Write(data, start, count);
+            file.Flush();
+        }
+
         private void NextSegment()
         {
-            var next = File.OpenHandle(Channel.SegmentPath(folder, name, segment + 1), FileMode.CreateNew,
+            var next = Channel.Open(Channel.SegmentPath(folder, name, segment + 1), FileMode.CreateNew,
                 FileAccess.Write, FileShare.Read | FileShare.Delete);
             WriteBatch(new List<byte[]> { Array.Empty<byte>() });
             file.Dispose();
@@ -138,7 +148,7 @@ namespace ErrorChecker.Core
             lock (sync)
             {
                 file.Dispose();
-                aes.Dispose();
+                cipher.Dispose();
             }
         }
     }
@@ -148,8 +158,8 @@ namespace ErrorChecker.Core
         private const int MaxRetries = 20;
         private readonly string folder;
         private readonly string name;
-        private readonly AesGcm aes;
-        private SafeFileHandle file;
+        private readonly RecordCipher cipher;
+        private FileStream file;
         private int segment;
         private long offset;
         private long sequence;
@@ -165,11 +175,11 @@ namespace ErrorChecker.Core
             this.folder = folder;
             this.name = name;
             file = Open(0);
-            aes = new AesGcm(key);
+            cipher = new RecordCipher(key);
         }
 
-        private SafeFileHandle Open(int index) =>
-            File.OpenHandle(Channel.SegmentPath(folder, name, index), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        private FileStream Open(int index) =>
+            Channel.Open(Channel.SegmentPath(folder, name, index), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
         // Renvoie les messages arrivés depuis le dernier appel (liste vide si rien de nouveau).
         public List<Msg> Poll()
@@ -177,7 +187,8 @@ namespace ErrorChecker.Core
             var result = new List<Msg>();
             while (true)
             {
-                int filled = RandomAccess.Read(file, buffer, offset);
+                file.Position = offset;
+                int filled = file.Read(buffer, 0, buffer.Length);
                 Visible = segment * Channel.DefaultSegmentSize + offset + filled;
                 int pos = 0, needed = 0;
                 bool nextSegment = false, retryLater = false;
@@ -191,7 +202,7 @@ namespace ErrorChecker.Core
                         needed = 4 + length;                              // pas encore entièrement lu
                         break;
                     }
-                    if (!valid || !TryDecrypt(buffer.AsSpan(pos + 4, length), out var plain))
+                    if (!valid || !TryDecrypt(pos + 4, length, out var plain))
                     {
                         // Un échec isolé peut venir d'une lecture concurrente d'une écriture (cache réseau) :
                         // on relit plus tard. Des échecs répétés = données corrompues ou falsifiées.
@@ -223,17 +234,9 @@ namespace ErrorChecker.Core
             }
         }
 
-        private bool TryDecrypt(ReadOnlySpan<byte> record, out byte[] plain)
+        private bool TryDecrypt(int start, int length, out byte[] plain)
         {
-            plain = new byte[record.Length - Channel.TagSize];
-            try
-            {
-                aes.Decrypt(Channel.Nonce(name, sequence), record[..plain.Length], record[plain.Length..], plain);
-            }
-            catch (CryptographicException)
-            {
-                return false;
-            }
+            if (!cipher.TryDecrypt(Channel.Nonce(name, sequence), buffer, start, length, out plain)) return false;
             failures = 0;
             sequence++;
             return true;
@@ -242,7 +245,7 @@ namespace ErrorChecker.Core
         public void Dispose()
         {
             file.Dispose();
-            aes.Dispose();
+            cipher.Dispose();
         }
     }
 }

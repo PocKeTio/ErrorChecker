@@ -1,5 +1,5 @@
 using System.IO;
-using System.Text.Json;
+using Newtonsoft.Json;
 
 namespace ErrorChecker.Core
 {
@@ -16,8 +16,8 @@ namespace ErrorChecker.Core
         {
             var path = Path.Combine(directory, FileName);
             if (!File.Exists(path)) throw new FileNotFoundException($"Configuration introuvable : {path}");
-            var options = new JsonSerializerOptions { ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-            var config = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(path), options) ?? new AppConfig();
+            // Newtonsoft accepte commentaires et virgules finales : fichier modifiable à la main sans piège.
+            var config = JsonConvert.DeserializeObject<AppConfig>(File.ReadAllText(path)) ?? new AppConfig();
             if (string.IsNullOrWhiteSpace(config.SharedFolder) || config.Helpers.Count == 0 || config.Helpers.Any(h => string.IsNullOrWhiteSpace(h.Email)))
                 throw new InvalidDataException($"{path} : SharedFolder et au moins un dépanneur (Helpers, avec Email) sont obligatoires.");
             return config;

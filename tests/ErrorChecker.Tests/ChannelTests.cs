@@ -5,7 +5,7 @@ using Xunit;
 public class ChannelTests : IDisposable
 {
     private readonly string dir = Path.Combine(Path.GetTempPath(), "errorchecker-" + Guid.NewGuid());
-    private readonly byte[] key = RandomNumberGenerator.GetBytes(32);
+    private readonly byte[] key = TestData.RandomBytes(32);
 
     public ChannelTests() => Directory.CreateDirectory(dir);
     public void Dispose() => Directory.Delete(dir, true);
@@ -40,7 +40,7 @@ public class ChannelTests : IDisposable
         // On remet l'en-tête du second lot à zéro : c'est l'état entre l'écriture du lot et sa validation.
         var bytes = File.ReadAllBytes(Segment0(dir));
         int second = 4 + BitConverter.ToInt32(bytes, 0);
-        var header = bytes[second..(second + 4)];
+        var header = bytes.Skip(second).Take(4).ToArray();
         Overwrite(Segment0(dir), second, new byte[4]);
         Assert.Equal(new[] { 1L }, Ticks(reader.Poll()));
         for (int i = 0; i < 20; i++) Assert.Empty(reader.Poll());  // l'écrivain peut être lent : attendre n'est pas une erreur
@@ -56,7 +56,7 @@ public class ChannelTests : IDisposable
         var target = Path.Combine(dir, "target");
         Directory.CreateDirectory(source);
         Directory.CreateDirectory(target);
-        var data = RandomNumberGenerator.GetBytes(10_000);
+        var data = TestData.RandomBytes(10_000);
         using (var writer = new ChannelWriter(source, Channel.UserToHelper, key, create: true))
             writer.Write(new ScreenFrame(1, 100, 100, 1, 2, 0, Array.Empty<Move>(), new[] { new Patch(0, 0, 50, 50, data) }));
         var bytes = File.ReadAllBytes(Segment0(source));
@@ -79,7 +79,7 @@ public class ChannelTests : IDisposable
     {
         using var writer = new ChannelWriter(dir, Channel.UserToHelper, key, create: true);
         using var reader = new ChannelReader(dir, Channel.UserToHelper, key);
-        var data = RandomNumberGenerator.GetBytes(3 * 1024 * 1024);
+        var data = TestData.RandomBytes(3 * 1024 * 1024);
         writer.Write(new ScreenFrame(1, 1920, 1080, 0, 0, 0, Array.Empty<Move>(), new[] { new Patch(0, 0, 1920, 1080, data) }), new Ping(7));
 
         var messages = reader.Poll();
@@ -141,7 +141,7 @@ public class ChannelTests : IDisposable
     public void Wrong_key_cannot_read()
     {
         using var writer = new ChannelWriter(dir, Channel.UserToHelper, key, create: true);
-        using var reader = new ChannelReader(dir, Channel.UserToHelper, RandomNumberGenerator.GetBytes(32));
+        using var reader = new ChannelReader(dir, Channel.UserToHelper, TestData.RandomBytes(32));
         writer.Write(new Ping(1));
         Assert.Throws<InvalidDataException>(() => { for (int i = 0; i < 50; i++) reader.Poll(); });
     }
@@ -173,7 +173,7 @@ public class ChannelFaultTests
         Directory.CreateDirectory(dir);
         try
         {
-            var key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            var key = TestData.RandomBytes(32);
             var writer = new ChannelWriter(dir, Channel.UserToHelper, key, create: true, segmentSize: 64);
             File.Create(Path.Combine(dir, "u2h.0001.log")).Dispose();   // la rotation va échouer (fichier déjà là)
             Assert.ThrowsAny<IOException>(() => writer.Write(new TextInput(new string('x', 100))));
