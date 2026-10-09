@@ -279,7 +279,7 @@ namespace ErrorChecker
                     await Task.Delay(5, token);
                     var settings = s.Settings;
                     if (Volatile.Read(ref s.SentSeq) - Volatile.Read(ref s.AckedSeq) >= MaxFramesInFlight) continue;
-                    double interval = 1000.0 / Math.Clamp(settings.Fps, 1, 30);
+                    double interval = 1000.0 / Math.Min(Math.Max(settings.Fps, 1), 30);
                     if (ElapsedMs(Volatile.Read(ref s.LastInput)) < InputBoostMs) interval = Math.Min(interval, InputBoostIntervalMs);
                     if (ElapsedMs(lastCapture) < interval) continue;
                     lastCapture = Stopwatch.GetTimestamp();

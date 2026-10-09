@@ -134,7 +134,7 @@ public class FrameRoundTripTests
         var encoder = new FrameEncoder(RawEncode);
         encoder.Encode(W, H, Stride, b => Screen(0).CopyTo(b, 0), 0, 0, 0, false, 1, 0);
         var small = new byte[320 * 4 * 200];
-        Array.Fill(small, (byte)255);
+        for (int i = 0; i < small.Length; i++) small[i] = 255;
         var frame = encoder.Encode(320, 200, 320 * 4, b => small.CopyTo(b, 0), 0, 0, 0, false, 2, 0)!;
         Assert.Equal(320 * 200, frame.Patches.Sum(p => p.W * p.H));
     }

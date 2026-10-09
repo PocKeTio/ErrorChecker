@@ -30,7 +30,7 @@ public class OutboxTests
         Directory.CreateDirectory(dir);
         try
         {
-            var key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+            var key = TestData.RandomBytes(32);
             using var writer = new ChannelWriter(dir, Channel.HelperToUser, key, create: true);
             using var reader = new ChannelReader(dir, Channel.HelperToUser, key);
             var outbox = new Outbox();

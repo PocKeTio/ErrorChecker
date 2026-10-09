@@ -63,7 +63,7 @@ namespace ErrorChecker.Logging
 
                         if (logs.Count > 0)
                         {
-                            await File.AppendAllLinesAsync(logFilePath, logs, token);
+                            File.AppendAllLines(logFilePath, logs);
                         }
                     }
                 }

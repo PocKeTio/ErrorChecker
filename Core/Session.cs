@@ -12,7 +12,10 @@ namespace ErrorChecker.Core
         public const string Scheme = "errorchecker";
         private const string Alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // base32 de Crockford : ni I, L, O, U
         private const int CodeLength = 12;
-        private const int Iterations = 200_000;
+        // 60 bits de hasard + 10 000 itérations : retrouver un code hors ligne depuis le partage coûterait
+        // ~2^73 opérations (des milliers d'années-GPU) pour une session qui dure quelques minutes.
+        // Plus d'itérations ne protège pas mieux et gèle l'interface (PBKDF2 est lent sous .NET Framework).
+        private const int Iterations = 10_000;
         private static readonly byte[] Salt = Encoding.ASCII.GetBytes("ErrorChecker/session/v1");
 
         public string Display => $"{Code[..4]}-{Code[4..8]}-{Code[8..]}";
@@ -20,8 +23,10 @@ namespace ErrorChecker.Core
 
         public static Session CreateNew(string sharedFolder)
         {
-            var code = new char[CodeLength];
-            for (int i = 0; i < code.Length; i++) code[i] = Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];
+            // 32 symboles = 5 bits : un octet aléatoire par caractère, sans biais (256 est un multiple de 32).
+            var random = new byte[CodeLength];
+            using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(random);
+            var code = random.Select(b => Alphabet[b % Alphabet.Length]).ToArray();
             var session = Open(sharedFolder, new string(code));
             Directory.CreateDirectory(session.Folder);
             return session;
@@ -31,9 +36,10 @@ namespace ErrorChecker.Core
         public static Session Open(string sharedFolder, string codeOrLink)
         {
             var code = Normalize(codeOrLink);
-            var derived = Rfc2898DeriveBytes.Pbkdf2(code, Salt, Iterations, HashAlgorithmName.SHA256, 32 + 10);
-            var folder = Path.Combine(sharedFolder, "sessions", "s-" + Convert.ToHexString(derived, 32, 10).ToLowerInvariant());
-            return new Session(code, folder, derived[..32]);
+            byte[] derived;
+            using (var pbkdf2 = new Rfc2898DeriveBytes(code, Salt, Iterations, HashAlgorithmName.SHA256)) derived = pbkdf2.GetBytes(32 + 10);
+            var folder = Path.Combine(sharedFolder, "sessions", "s-" + BitConverter.ToString(derived, 32, 10).Replace("-", "").ToLowerInvariant());
+            return new Session(code, folder, derived.Take(32).ToArray());
         }
 
         public static string Normalize(string input)

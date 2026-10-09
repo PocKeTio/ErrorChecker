@@ -6,16 +6,14 @@ Tout passe par un **dossier partagé** (fichiers) et **Outlook** (notification) 
 
 ## Installation
 
-1. Publier l'application et la déposer avec sa configuration dans un dossier accessible à tous, par exemple
+1. Compiler et déposer le dossier de sortie dans un dossier accessible à tous, par exemple
    `\\serveur\outils\ErrorChecker\` :
    ```
-   dotnet publish ErrorChecker.csproj -c Release -r win-x64 --self-contained false
+   dotnet build ErrorChecker.csproj -c Release
    ```
-   ≈ 2 Mo, mais il faut le runtime « .NET 6 Desktop » sur chaque poste. Sinon, un seul exécutable autonome
-   (≈ 70 Mo, plus lent à lancer depuis le réseau) :
-   ```
-   dotnet publish ErrorChecker.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
-   ```
+   (dossier `bin/Release/net48/`). L'application cible **.NET Framework 4.8**, déjà présent sur tous les
+   Windows 10 et 11 : rien à installer sur les postes. Copier tout le dossier : `ErrorChecker.exe`,
+   `ErrorChecker.exe.config` (redirections de versions, indispensable) et les DLL qui l'accompagnent.
 2. Adapter `ErrorChecker.json` à côté de l'exécutable :
    ```json
    {
@@ -55,16 +53,17 @@ légèrement réduites, texte toujours net). « Sans perte » : aucun JPEG, pixe
 ## Comment ça marche (et pourquoi c'est léger)
 
 - **Transport** : un fichier journal par sens, lu au fil de l'eau via un handle ouvert (pas de liste de dossier,
-  sujette aux caches SMB de 5 à 10 s), chiffré AES-GCM. La clé et le nom du dossier sont dérivés du code (PBKDF2) :
+  sujette aux caches SMB de 5 à 10 s), chiffré et authentifié (AES-CTR + HMAC-SHA256). La clé et le nom du dossier
+  sont dérivés du code (PBKDF2) :
   rien de secret n'est écrit sur le partage.
 - **Image** : seuls les pixels modifiés partent (rectangle serré dans les tuiles 64×64 touchées) ; un défilement est
   envoyé comme « recopier ces lignes » ; le texte et l'interface (peu de couleurs) passent par une palette **sans
-  perte** compressée en Brotli, seules les colonnes riches (photo, icônes) en JPEG ; une zone envoyée en JPEG puis
+  perte** compressée en Deflate, seules les colonnes riches (photo, icônes) en JPEG ; une zone envoyée en JPEG puis
   immobile est renvoyée nette après 0,7 s ; encodage et décodage en parallèle.
 
   Mesuré sur 16 captures réelles (Excel, éditeurs VBA/SQL, dialogues, Outlook, web, fonds photo ; JPEG d'ImageSharp
-  en remplacement de GDI+) : image complète ≈ 57 Ko en moyenne (53 Ko en « Économie »), saisie dans une cellule
-  ≈ 320 octets, défilement de 20 px ≈ 3 Ko.
+  en remplacement de GDI+) : image complète ≈ 65 Ko en moyenne, saisie dans une cellule ≈ 320 octets,
+  défilement de 20 px ≈ 3 Ko.
 - **Réactivité** : capture rapprochée juste après un clic ou une touche du dépanneur ; envoi immédiat des actions.
 
 ## Limites
@@ -78,5 +77,7 @@ légèrement réduites, texte toujours net). « Sans perte » : aucun JPEG, pixe
 ```
 dotnet test tests/ErrorChecker.Tests
 ```
-(protocole, canal fichier, diff, défilement, codec palette, et simulation complète vérifiant que l'écran du
-dépanneur reste identique à celui de l'utilisateur ; s'exécute aussi sous Linux.)
+Les tests tournent sur .NET Framework 4.8 (la cible de l'application) et sur .NET 6 : protocole, canal fichier,
+chiffrement, diff, défilement, codec palette, et simulation complète vérifiant que l'écran du dépanneur reste
+identique à celui de l'utilisateur. Sous Linux, la cible net48 s'exécute avec Mono :
+`mono ~/.nuget/packages/xunit.runner.console/2.5.0/tools/net481/xunit.console.exe tests/ErrorChecker.Tests/bin/Debug/net48/ErrorChecker.Tests.dll`

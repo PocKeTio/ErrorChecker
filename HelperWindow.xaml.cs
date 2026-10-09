@@ -248,8 +248,8 @@ namespace ErrorChecker
             x = y = 0;
             if (!accepted || bitmap == null || ScreenImage.ActualWidth <= 0) return false;
             var p = e.GetPosition(ScreenImage);
-            x = (int)Math.Clamp(p.X * bitmap.PixelWidth / ScreenImage.ActualWidth, 0, bitmap.PixelWidth - 1);
-            y = (int)Math.Clamp(p.Y * bitmap.PixelHeight / ScreenImage.ActualHeight, 0, bitmap.PixelHeight - 1);
+            x = (int)Math.Min(Math.Max(p.X * bitmap.PixelWidth / ScreenImage.ActualWidth, 0), bitmap.PixelWidth - 1);
+            y = (int)Math.Min(Math.Max(p.Y * bitmap.PixelHeight / ScreenImage.ActualHeight, 0), bitmap.PixelHeight - 1);
             lastPoint = (x, y);
             return true;
         }

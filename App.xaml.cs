@@ -52,7 +52,7 @@ namespace ErrorChecker
         // Les liens errorchecker: des mails ouvrent cet exécutable. Dans HKCU : pas besoin d'être administrateur.
         private static void RegisterUrlProtocol()
         {
-            var exe = Environment.ProcessPath;
+            var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
             if (exe == null) return;
             using var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + Session.Scheme);
             key.SetValue("", "URL:Assistance à distance");
