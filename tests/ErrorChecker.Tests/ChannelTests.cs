@@ -58,7 +58,7 @@ public class ChannelTests : IDisposable
         Directory.CreateDirectory(target);
         var data = RandomNumberGenerator.GetBytes(10_000);
         using (var writer = new ChannelWriter(source, Channel.UserToHelper, key, create: true))
-            writer.Write(new ScreenFrame(100, 100, 1, 2, new[] { new Patch(0, 0, 50, 50, data) }));
+            writer.Write(new ScreenFrame(1, 100, 100, 1, 2, 0, Array.Empty<Move>(), new[] { new Patch(0, 0, 50, 50, data) }));
         var bytes = File.ReadAllBytes(Segment0(source));
 
         Channel.Create(target, Channel.UserToHelper);
@@ -80,7 +80,7 @@ public class ChannelTests : IDisposable
         using var writer = new ChannelWriter(dir, Channel.UserToHelper, key, create: true);
         using var reader = new ChannelReader(dir, Channel.UserToHelper, key);
         var data = RandomNumberGenerator.GetBytes(3 * 1024 * 1024);
-        writer.Write(new ScreenFrame(1920, 1080, 0, 0, new[] { new Patch(0, 0, 1920, 1080, data) }), new Ping(7));
+        writer.Write(new ScreenFrame(1, 1920, 1080, 0, 0, 0, Array.Empty<Move>(), new[] { new Patch(0, 0, 1920, 1080, data) }), new Ping(7));
 
         var messages = reader.Poll();
         Assert.Equal(data, Assert.IsType<ScreenFrame>(messages[0]).Patches[0].Data);
@@ -134,7 +134,7 @@ public class ChannelTests : IDisposable
         using (var fs = new FileStream(Segment0(dir), FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
             fs.Write(bytes);
 
-        Assert.Throws<InvalidDataException>(() => { for (int i = 0; i < 10; i++) reader.Poll(); });
+        Assert.Throws<InvalidDataException>(() => { for (int i = 0; i < 50; i++) reader.Poll(); });
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public class ChannelTests : IDisposable
         using var writer = new ChannelWriter(dir, Channel.UserToHelper, key, create: true);
         using var reader = new ChannelReader(dir, Channel.UserToHelper, RandomNumberGenerator.GetBytes(32));
         writer.Write(new Ping(1));
-        Assert.Throws<InvalidDataException>(() => { for (int i = 0; i < 10; i++) reader.Poll(); });
+        Assert.Throws<InvalidDataException>(() => { for (int i = 0; i < 50; i++) reader.Poll(); });
     }
 
     [Fact]

@@ -11,7 +11,10 @@ namespace ErrorChecker
         public static Logger Log { get; } = new(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ErrorChecker"), LogLevel.Info);
 
-        // Lancé par un lien errorchecker:... (mail) => dépanneur ; sinon => utilisateur.
+        // errorchecker:CODE (lien du mail)  => dépanneur, session ouverte directement
+        // /depanneur                        => saisie du code
+        // /aide [description]               => la demande part sans clic (bouton « Aide » d'une appli VBA)
+        // sans argument                     => fenêtre de demande d'aide
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
@@ -28,11 +31,15 @@ namespace ErrorChecker
             }
             catch (Exception ex)
             {
-                Log.LogWarning($"Liens {SessionLink.Scheme}: non enregistrés : {ex.Message}");
+                Log.LogWarning($"Liens {Session.Scheme}: non enregistrés : {ex.Message}");
             }
 
-            var link = e.Args.FirstOrDefault(a => a.StartsWith(SessionLink.Scheme + ":", StringComparison.OrdinalIgnoreCase));
-            Window window = link != null ? new HelperWindow(link) : new UserWindow();
+            var args = e.Args;
+            var link = args.FirstOrDefault(a => a.StartsWith(Session.Scheme + ":", StringComparison.OrdinalIgnoreCase));
+            bool Flag(string name) => args.Length > 0 && args[0].TrimStart('/', '-').Equals(name, StringComparison.OrdinalIgnoreCase);
+            Window window = link != null ? new HelperWindow(link)
+                : Flag("aide") ? new UserWindow(autoSend: true, description: string.Join(" ", args.Skip(1)))
+                : new UserWindow(helperMode: Flag("depanneur"));
             window.Show();
         }
 
@@ -47,7 +54,7 @@ namespace ErrorChecker
         {
             var exe = Environment.ProcessPath;
             if (exe == null) return;
-            using var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + SessionLink.Scheme);
+            using var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\" + Session.Scheme);
             key.SetValue("", "URL:Assistance à distance");
             key.SetValue("URL Protocol", "");
             using var command = key.CreateSubKey(@"shell\open\command");

@@ -13,8 +13,14 @@ namespace ErrorChecker.Core
     public sealed record Refuse : Msg;
     // Quality : 0 = PNG (net, sans perte), sinon qualité JPEG 1-100.
     public sealed record Settings(int Fps, int Quality, int Screen) : Msg;
-    public sealed record ScreenFrame(int Width, int Height, int CursorX, int CursorY, Patch[] Patches) : Msg;
+    // Seq : numéro acquitté par le dépanneur (Ack) une fois l'image affichée.
+    // LagMs : délai capture -> affichage mesuré côté utilisateur sur les images précédentes.
+    // Moves (défilements) s'appliquent à l'image précédente, avant les Patches.
+    public sealed record ScreenFrame(int Seq, int Width, int Height, int CursorX, int CursorY, int LagMs, Move[] Moves, Patch[] Patches) : Msg;
     public sealed record Patch(int X, int Y, int W, int H, byte[] Data);
+    // Lignes [Y - Dy, Y - Dy + H) recopiées en [Y, Y + H), entre les colonnes X et X + W.
+    public readonly record struct Move(int X, int Y, int W, int H, int Dy);
+    public sealed record Ack(int Seq) : Msg;
     // Modifiers : valeur de System.Windows.Input.ModifierKeys.
     public sealed record KeyStroke(int Vk, int Modifiers) : Msg;
     public sealed record TextInput(string Text) : Msg;
@@ -24,7 +30,7 @@ namespace ErrorChecker.Core
 
     public static class Protocol
     {
-        private enum T : byte { Ping = 1, Pong, Bye, Join, Accept, Refuse, Settings, ScreenFrame, Key, Text, Mouse }
+        private enum T : byte { Ping = 1, Pong, Bye, Join, Accept, Refuse, Settings, ScreenFrame, Key, Text, Mouse, Ack }
 
         public static byte[] Encode(Msg msg)
         {
@@ -43,7 +49,9 @@ namespace ErrorChecker.Core
                 case Refuse: w.Write((byte)T.Refuse); break;
                 case Settings s: w.Write((byte)T.Settings); w.Write(s.Fps); w.Write(s.Quality); w.Write(s.Screen); break;
                 case ScreenFrame f:
-                    w.Write((byte)T.ScreenFrame); w.Write(f.Width); w.Write(f.Height); w.Write(f.CursorX); w.Write(f.CursorY);
+                    w.Write((byte)T.ScreenFrame); w.Write(f.Seq); w.Write(f.Width); w.Write(f.Height); w.Write(f.CursorX); w.Write(f.CursorY); w.Write(f.LagMs);
+                    w.Write(f.Moves.Length);
+                    foreach (var m in f.Moves) { w.Write(m.X); w.Write(m.Y); w.Write(m.W); w.Write(m.H); w.Write(m.Dy); }
                     w.Write(f.Patches.Length);
                     foreach (var r in f.Patches)
                     {
@@ -54,6 +62,7 @@ namespace ErrorChecker.Core
                 case KeyStroke k: w.Write((byte)T.Key); w.Write(k.Vk); w.Write(k.Modifiers); break;
                 case TextInput t: w.Write((byte)T.Text); w.Write(t.Text); break;
                 case MouseInput m: w.Write((byte)T.Mouse); w.Write((byte)m.Action); w.Write(m.X); w.Write(m.Y); w.Write(m.Value); break;
+                case Ack a: w.Write((byte)T.Ack); w.Write(a.Seq); break;
                 default: throw new ArgumentException($"Message inconnu : {msg.GetType().Name}");
             }
             w.Flush();
@@ -72,10 +81,11 @@ namespace ErrorChecker.Core
                 T.Accept => new Accept(r.ReadInt32(), ReadStrings(r)),
                 T.Refuse => new Refuse(),
                 T.Settings => new Settings(r.ReadInt32(), r.ReadInt32(), r.ReadInt32()),
-                T.ScreenFrame => new ScreenFrame(r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), ReadPatches(r)),
+                T.ScreenFrame => new ScreenFrame(r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), ReadMoves(r), ReadPatches(r)),
                 T.Key => new KeyStroke(r.ReadInt32(), r.ReadInt32()),
                 T.Text => new TextInput(r.ReadString()),
                 T.Mouse => new MouseInput((MouseKind)r.ReadByte(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32()),
+                T.Ack => new Ack(r.ReadInt32()),
                 var t => throw new InvalidDataException($"Type de message inconnu : {t}")
             };
         }
@@ -84,6 +94,13 @@ namespace ErrorChecker.Core
         {
             var result = new string[r.ReadInt32()];
             for (int i = 0; i < result.Length; i++) result[i] = r.ReadString();
+            return result;
+        }
+
+        private static Move[] ReadMoves(BinaryReader r)
+        {
+            var result = new Move[r.ReadInt32()];
+            for (int i = 0; i < result.Length; i++) result[i] = new Move(r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32());
             return result;
         }
 

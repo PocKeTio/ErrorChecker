@@ -6,7 +6,7 @@ public class ProtocolTests
     public static TheoryData<Msg> SimpleMessages => new()
     {
         new Ping(long.MaxValue), new Pong(-1), new Bye("Fin à 12h"), new Join("Jean (PC-42)"), new Refuse(),
-        new Settings(5, 0, 1), new KeyStroke(0x77, 4), new TextInput("é€😀\n\t"), new MouseInput(MouseKind.Wheel, 10, 20, -120),
+        new Settings(5, 0, 1), new KeyStroke(0x77, 4), new Ack(42), new TextInput("é€😀\n\t"), new MouseInput(MouseKind.Wheel, 10, 20, -120),
     };
 
     [Theory]
@@ -24,9 +24,11 @@ public class ProtocolTests
     [Fact]
     public void Frame_survives_round_trip()
     {
-        var sent = new ScreenFrame(1920, 1080, 5, 6, new[] { new Patch(0, 64, 128, 64, new byte[] { 1, 2, 3 }), new Patch(1, 2, 3, 4, Array.Empty<byte>()) });
+        var sent = new ScreenFrame(7, 1920, 1080, 5, 6, 250, new[] { new Move(0, 100, 1900, 800, -40) },
+            new[] { new Patch(0, 64, 128, 64, new byte[] { 1, 2, 3 }), new Patch(1, 2, 3, 4, Array.Empty<byte>()) });
         var received = Assert.IsType<ScreenFrame>(Protocol.Decode(Protocol.Encode(sent)));
-        Assert.Equal((1920, 1080, 5, 6), (received.Width, received.Height, received.CursorX, received.CursorY));
+        Assert.Equal((7, 1920, 1080, 5, 6, 250), (received.Seq, received.Width, received.Height, received.CursorX, received.CursorY, received.LagMs));
+        Assert.Equal(sent.Moves, received.Moves);
         Assert.Equal(sent.Patches.Select(r => (r.X, r.Y, r.W, r.H)), received.Patches.Select(r => (r.X, r.Y, r.W, r.H)));
         Assert.Equal(sent.Patches.Select(r => r.Data), received.Patches.Select(r => r.Data));
     }

@@ -11,8 +11,10 @@ namespace ErrorChecker.Core
     //  - aucune énumération de dossier ni File.Exists : le client SMB met ces informations en cache
     //    (10 s pour les dossiers et les métadonnées, 5 s pour « fichier introuvable » par défaut) ;
     //  - le lecteur garde le fichier ouvert et lit à la suite : une requête par sondage, rien n'est relu ;
-    //  - jamais de lecture d'un fichier à moitié écrit : un lot est écrit avec son premier en-tête à 0,
-    //    puis cet en-tête est écrit en dernier. En-tête nul = « pas encore prêt ».
+    //  - jamais de lecture d'un fichier à moitié écrit : un gros lot est écrit avec son premier en-tête à 0,
+    //    puis cet en-tête est écrit en dernier. En-tête nul = « pas encore prêt ». Un petit lot (touches,
+    //    clics, acquittements) part en une seule requête : une lecture concurrente incomplète échoue au
+    //    déchiffrement et est simplement relue au sondage suivant.
     //
     // Enregistrement : [longueur u32][message chiffré AES-GCM][tag 16 octets].
     // Le nonce n'est pas stocké : il vaut (canal, numéro d'ordre). Un enregistrement rejoué,
@@ -25,6 +27,8 @@ namespace ErrorChecker.Core
         public const long DefaultSegmentSize = 32L * 1024 * 1024;
         internal const int TagSize = 16;
         internal const int MaxRecordSize = 64 * 1024 * 1024;
+        // Jusqu'à cette taille, le client SMB envoie l'écriture en une seule requête, appliquée d'un bloc.
+        internal const int SingleWriteLimit = 64 * 1024;
 
         internal static string SegmentPath(string folder, string name, int index) =>
             Path.Combine(folder, $"{name}.{index:D4}.log");
@@ -94,10 +98,15 @@ namespace ErrorChecker.Core
                 aes.Encrypt(Channel.Nonce(name, sequence++), p, batch.AsSpan(pos + 4, p.Length), batch.AsSpan(pos + 4 + p.Length, Channel.TagSize));
                 pos += 4 + p.Length + Channel.TagSize;
             }
-            var header = batch[..4];
-            batch.AsSpan(0, 4).Clear();
-            RandomAccess.Write(file, batch, offset);   // le lot, invisible tant que son en-tête vaut 0...
-            RandomAccess.Write(file, header, offset);  // ...puis l'en-tête : le lot apparaît d'un seul coup
+            if (batch.Length <= Channel.SingleWriteLimit)
+                RandomAccess.Write(file, batch, offset);   // un aller-retour réseau au lieu de deux
+            else
+            {
+                var header = batch[..4];
+                batch.AsSpan(0, 4).Clear();
+                RandomAccess.Write(file, batch, offset);   // le lot, invisible tant que son en-tête vaut 0...
+                RandomAccess.Write(file, header, offset);  // ...puis l'en-tête : le lot apparaît d'un seul coup
+            }
             offset += batch.Length;
         }
 
@@ -124,7 +133,7 @@ namespace ErrorChecker.Core
 
     public sealed class ChannelReader : IDisposable
     {
-        private const int MaxRetries = 5;
+        private const int MaxRetries = 20;
         private readonly string folder;
         private readonly string name;
         private readonly AesGcm aes;

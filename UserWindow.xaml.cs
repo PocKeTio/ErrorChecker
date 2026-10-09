@@ -11,37 +11,79 @@ using ErrorChecker.Mail;
 
 namespace ErrorChecker
 {
-    // Côté utilisateur : un bouton pour demander de l'aide, un accord explicite, un bouton pour arrêter.
+    // Côté utilisateur : choisir à qui demander de l'aide, un accord explicite, un bouton pour arrêter.
     // Tous les réglages (écran, cadence, qualité) sont pilotés par le dépanneur.
     public partial class UserWindow : Window
     {
         private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(20);
+        private const int MaxFramesInFlight = 2;    // au-delà, on attend l'acquittement : le retard ne s'accumule jamais
+        private const int InputBoostMs = 500;       // après une action du dépanneur, réponse visible au plus vite
+        private const int InputBoostIntervalMs = 100;
 
         private readonly ScreenManager screenManager = new();
-        private SessionLink? session;
+        private readonly bool autoSend;
+        private readonly bool helperMode;
+        private AppConfig? config;
+        private Session? session;
         private ChannelWriter? writer;
         private ChannelReader? reader;
         private CancellationTokenSource? cts;
-        private volatile Settings settings = new(Fps: 5, Quality: 70, Screen: -1); // = réglages par défaut du dépanneur
+        private volatile Settings settings = new(Fps: 5, Quality: 60, Screen: -1); // = réglages par défaut du dépanneur
+        private volatile bool joined;
         private volatile bool accepted;
         private int keyframeRequested;
+        private int sentSeq;
+        private int ackedSeq;
+        private readonly long[] sentAt = new long[16];
+        private volatile int lagMs;
+        private long lastInput;
 
-        public UserWindow()
+        public UserWindow(bool autoSend = false, string? description = null, bool helperMode = false)
         {
             InitializeComponent();
+            this.autoSend = autoSend;
+            this.helperMode = helperMode;
+            ProblemText.Text = description ?? "";
         }
 
-        private void HelpButton_Click(object sender, RoutedEventArgs e)
+        private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             try
             {
-                var config = AppConfig.Load(AppContext.BaseDirectory);
-                SessionLink.DeleteStale(config.SharedFolder, TimeSpan.FromDays(1));
-                session = SessionLink.CreateNew(config.SharedFolder);
+                config = AppConfig.Load(AppContext.BaseDirectory);
+                HelperBox.ItemsSource = config.Helpers;
+                HelperBox.SelectedIndex = 0;
+                HelperPanel.Visibility = config.Helpers.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                App.Log.LogError($"Configuration : {ex}");
+                HelperPanel.Visibility = Visibility.Collapsed;
+                HelpButton.IsEnabled = false;
+                MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            if (helperMode)
+            {
+                HelperExpander.IsExpanded = true;
+                CodeText.Focus();
+            }
+            else if (autoSend) SendRequest();   // lancé par l'appli VBA : la demande part sans clic
+        }
+
+        private void HelpButton_Click(object sender, RoutedEventArgs e) => SendRequest();
+
+        private void SendRequest()
+        {
+            var helper = (HelperContact)HelperBox.SelectedItem;
+            try
+            {
+                Session.DeleteStale(config!.SharedFolder, TimeSpan.FromDays(1));
+                session = Session.CreateNew(config.SharedFolder);
                 writer = new ChannelWriter(session.Folder, Channel.UserToHelper, session.Key, create: true);
                 Channel.Create(session.Folder, Channel.HelperToUser);
                 reader = new ChannelReader(session.Folder, Channel.HelperToUser, session.Key);
-                OutlookMailer.Send(config.SupportEmail, $"Demande d'assistance – {Environment.UserName} ({Environment.MachineName})", MailBody(session));
+                OutlookMailer.Send(helper.Email, $"Demande d'assistance – {Environment.UserName} ({Environment.MachineName})", MailBody(session));
             }
             catch (Exception ex)
             {
@@ -51,23 +93,23 @@ namespace ErrorChecker
                 return;
             }
 
-            App.Log.LogInfo($"Demande d'aide envoyée : {session.Folder}");
-            ShowSession("Demande envoyée au support.\nGardez cette fenêtre ouverte : on vous demandera d'accepter la prise en main.", "Annuler la demande");
+            App.Log.LogInfo($"Demande d'aide envoyée à {helper.Email} : {session.Folder}");
+            ShowSession($"Demande envoyée à {helper}.\nGardez cette fenêtre ouverte : on vous demandera d'accepter la prise en main.\n\nCode : {session.Display}", "Annuler la demande");
             cts = new CancellationTokenSource();
             var token = cts.Token;
             Task.Run(() => ReceiveLoop(token));
             Task.Run(() => PingLoop(token));
         }
 
-        private string MailBody(SessionLink link)
+        private string MailBody(Session s)
         {
-            static string Html(string s) => WebUtility.HtmlEncode(s);
+            static string Html(string text) => WebUtility.HtmlEncode(text);
             var problem = string.IsNullOrWhiteSpace(ProblemText.Text) ? "(non précisé)" : ProblemText.Text.Trim();
-            var url = link.ToString();
             return $"<p><b>{Html(Environment.UserName)}</b> (poste {Html(Environment.MachineName)}) demande de l'aide.</p>"
                  + $"<p>Problème : {Html(problem).Replace("\n", "<br>")}</p>"
-                 + $"<p><a href=\"{Html(url)}\">Prendre la main</a> (l'utilisateur devra accepter).</p>"
-                 + $"<p style=\"color:gray\">Si le lien ne s'ouvre pas : lancer ErrorChecker, « Je suis le dépanneur », coller :<br>{Html(url)}</p>";
+                 + $"<p style=\"font-size:20pt;font-family:Consolas,monospace\"><a href=\"{Html(s.Link)}\">{Html(s.Display)}</a></p>"
+                 + "<p>Cliquer sur le code ouvre ErrorChecker. Sinon : lancer ErrorChecker, « Je suis le dépanneur », taper le code. "
+                 + "L'utilisateur devra accepter la prise en main.</p>";
         }
 
         private async Task ReceiveLoop(CancellationToken token)
@@ -85,7 +127,8 @@ namespace ErrorChecker
                         End("La connexion avec le dépanneur a été perdue.", sendBye: true);
                         return;
                     }
-                    await Task.Delay(30, token);
+                    // En attente du dépanneur (parfois longtemps) : sondage lent. En session : réactif.
+                    await Task.Delay(joined ? 15 : 250, token);
                 }
             }
             catch (OperationCanceledException) { }
@@ -96,7 +139,8 @@ namespace ErrorChecker
         {
             switch (msg)
             {
-                case Join join when !accepted:
+                case Join join when !joined:
+                    joined = true;
                     App.Log.LogInfo($"Demande de prise en main : {join.Helper}");
                     if (!await Dispatcher.InvokeAsync(() => AskConsent(join.Helper)))
                     {
@@ -119,6 +163,9 @@ namespace ErrorChecker
                     settings = s;
                     Interlocked.Exchange(ref keyframeRequested, 1);
                     break;
+                case Ack ack:
+                    OnAck(ack.Seq);
+                    break;
                 case Ping ping:
                     writer!.Write(new Pong(ping.Ticks));
                     break;
@@ -127,16 +174,30 @@ namespace ErrorChecker
                     break;
                 case KeyStroke key when accepted:
                     InputInjector.Key(key.Vk, (ModifierKeys)key.Modifiers);
+                    Volatile.Write(ref lastInput, Stopwatch.GetTimestamp());
                     break;
                 case TextInput text when accepted:
                     InputInjector.Text(text.Text);
+                    Volatile.Write(ref lastInput, Stopwatch.GetTimestamp());
                     break;
                 case MouseInput mouse when accepted:
                     var bounds = screenManager.GetCurrentScreenBounds();
                     InputInjector.Mouse(mouse.Action, bounds.X + mouse.X, bounds.Y + mouse.Y, mouse.Value);
+                    if (mouse.Action != MouseKind.Move) Volatile.Write(ref lastInput, Stopwatch.GetTimestamp());
                     break;
             }
         }
+
+        // Retard capture -> affichage, lissé, renvoyé au dépanneur dans les images suivantes.
+        private void OnAck(int seq)
+        {
+            if (seq <= Volatile.Read(ref ackedSeq)) return;
+            int sample = (int)ElapsedMs(sentAt[seq % sentAt.Length]);
+            lagMs = lagMs == 0 ? sample : (lagMs * 3 + sample) / 4;
+            Volatile.Write(ref ackedSeq, seq);
+        }
+
+        private static double ElapsedMs(long since) => (Stopwatch.GetTimestamp() - since) * 1000.0 / Stopwatch.Frequency;
 
         private bool AskConsent(string helper)
         {
@@ -149,16 +210,26 @@ namespace ErrorChecker
             return answer == MessageBoxResult.Yes;
         }
 
+        // Cadence : au plus Fps images/s, jamais plus de MaxFramesInFlight images non acquittées
+        // (si le réseau ou le dépanneur ne suit pas, la cadence baisse d'elle-même), et une capture
+        // rapprochée juste après une action du dépanneur pour qu'il voie l'effet de son clic sans attendre.
         private async Task CaptureLoop(CancellationToken token)
         {
             var encoder = new ScreenEncoder();
+            long lastCapture = 0;
             bool blocked = false;
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    var started = Stopwatch.StartNew();
+                    await Task.Delay(5, token);
                     var s = settings;
+                    if (Volatile.Read(ref sentSeq) - Volatile.Read(ref ackedSeq) >= MaxFramesInFlight) continue;
+                    double interval = 1000.0 / Math.Clamp(s.Fps, 1, 30);
+                    if (ElapsedMs(Volatile.Read(ref lastInput)) < InputBoostMs) interval = Math.Min(interval, InputBoostIntervalMs);
+                    if (ElapsedMs(lastCapture) < interval) continue;
+                    lastCapture = Stopwatch.GetTimestamp();
+
                     if (Interlocked.Exchange(ref keyframeRequested, 0) == 1) encoder.Reset();
                     ScreenFrame? frame;
                     try
@@ -166,7 +237,7 @@ namespace ErrorChecker
                         var bounds = screenManager.GetCurrentScreenBounds();
                         var cursor = System.Windows.Forms.Cursor.Position;
                         using var screenshot = screenManager.CaptureScreen();
-                        frame = encoder.Encode(screenshot, new System.Drawing.Point(cursor.X - bounds.X, cursor.Y - bounds.Y), s.Quality);
+                        frame = encoder.Encode(screenshot, new System.Drawing.Point(cursor.X - bounds.X, cursor.Y - bounds.Y), s.Quality, sentSeq + 1, lagMs);
                         blocked = false;
                     }
                     catch (Win32Exception ex)
@@ -177,9 +248,10 @@ namespace ErrorChecker
                         await Task.Delay(1000, token);
                         continue;
                     }
-                    // Écriture bloquante : si le réseau est lent, la cadence baisse d'elle-même.
-                    if (frame != null) writer!.Write(frame);
-                    await Task.Delay(Math.Max(10, 1000 / Math.Clamp(s.Fps, 1, 30) - (int)started.ElapsedMilliseconds), token);
+                    if (frame == null) continue;
+                    sentAt[frame.Seq % sentAt.Length] = Stopwatch.GetTimestamp();
+                    Volatile.Write(ref sentSeq, frame.Seq);
+                    writer!.Write(frame);
                 }
             }
             catch (OperationCanceledException) { }
@@ -222,6 +294,7 @@ namespace ErrorChecker
 
         private void CloseSession(bool sendBye)
         {
+            joined = false;
             accepted = false;
             cts?.Cancel();
             InputInjector.ReleaseMouseButtons();
@@ -241,6 +314,8 @@ namespace ErrorChecker
             writer = null;
             reader = null;
             cts = null;
+            sentSeq = ackedSeq = 0;
+            lagMs = 0;
         }
 
         private void ShowSession(string status, string button)
@@ -264,10 +339,22 @@ namespace ErrorChecker
 
         private void StopButton_Click(object sender, RoutedEventArgs e) => EndSession(null, sendBye: true);
 
+        // Code mal tapé ou session introuvable : on revient ici pour corriger, sans quitter l'appli.
         private void JoinButton_Click(object sender, RoutedEventArgs e)
         {
-            new HelperWindow(LinkText.Text).Show();
-            Close();
+            try
+            {
+                Session.Normalize(CodeText.Text);
+            }
+            catch (FormatException ex)
+            {
+                MessageBox.Show(this, ex.Message, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var helperWindow = new HelperWindow(CodeText.Text);
+            helperWindow.Closed += (_, _) => { if (helperWindow.Joined) Close(); else Show(); };
+            Hide();
+            helperWindow.Show();
         }
 
         private void Window_Closing(object? sender, CancelEventArgs e)

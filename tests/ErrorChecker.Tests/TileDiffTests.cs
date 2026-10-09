@@ -54,3 +54,17 @@ public class TileDiffTests
     public void Resolution_change_sends_whole_screen() =>
         Assert.Equal(new[] { new Area(0, 0, W, H) }, TileDiff.DirtyAreas(new byte[10], Blank(), W, H, Stride));
 }
+
+public class TileBoundsTests
+{
+    [Fact]
+    public void Bounds_cover_only_dirty_columns_and_rows()
+    {
+        var dirty = new bool[3, 4];
+        dirty[1, 1] = dirty[2, 2] = true;
+        Assert.Equal(new Area(64, 64, 128, 86), TileDiff.Bounds(dirty, 200, 150));
+    }
+
+    [Fact]
+    public void Bounds_of_clean_screen_is_null() => Assert.Null(TileDiff.Bounds(new bool[3, 4], 200, 150));
+}

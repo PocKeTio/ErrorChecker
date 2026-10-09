@@ -11,35 +11,40 @@ using ErrorChecker.Core;
 
 namespace ErrorChecker
 {
-    // Côté dépanneur : ouvert par le lien du mail. Affiche l'écran de l'utilisateur et lui envoie
-    // souris et clavier une fois qu'il a accepté.
+    // Côté dépanneur : ouvert par le lien du mail (ou le code tapé). Affiche l'écran de l'utilisateur
+    // et lui envoie souris et clavier une fois qu'il a accepté.
     public partial class HelperWindow : Window
     {
         private static readonly TimeSpan PeerTimeout = TimeSpan.FromSeconds(20);
 
-        private readonly string link;
+        private readonly string code;
         private readonly CancellationTokenSource cts = new();
         private readonly object pendingLock = new();
+        private readonly SemaphoreSlim pendingSignal = new(0);
         private readonly DispatcherTimer statsTimer = new() { Interval = TimeSpan.FromSeconds(1) };
         private readonly HashSet<MouseButton> pressed = new();
-        private SessionLink? session;
+        private Session? session;
         private ChannelWriter? writer;
         private ChannelReader? reader;
         private List<Msg> pending = new();
         private WriteableBitmap? bitmap;
+        private readonly FrameDecoder decoder = new(DecodeImage); // copie locale de l'écran de l'utilisateur
         private Point remoteCursor = new(-1, -1);
         private (int X, int Y) lastPoint = (-1, -1);
         private bool accepted;
         private bool ended;
+
+        public bool Joined { get; private set; }
         private bool loadingScreens;
         private int framesReceived;
         private long bytesReceived;
         private double roundTripMs = -1;
+        private int lagMs = -1;
 
-        public HelperWindow(string link)
+        public HelperWindow(string code)
         {
             InitializeComponent();
-            this.link = link;
+            this.code = code;
             Loaded += (_, _) => Start();
             statsTimer.Tick += (_, _) => ShowStats();
         }
@@ -48,7 +53,7 @@ namespace ErrorChecker
         {
             try
             {
-                session = SessionLink.Parse(link);
+                session = Session.Open(AppConfig.Load(AppContext.BaseDirectory).SharedFolder, code);
                 reader = new ChannelReader(session.Folder, Channel.UserToHelper, session.Key);
                 writer = new ChannelWriter(session.Folder, Channel.HelperToUser, session.Key, create: false);
                 writer.Write(new Join($"{Environment.UserName} ({Environment.MachineName})"));
@@ -70,8 +75,9 @@ namespace ErrorChecker
                 return;
             }
 
+            Joined = true;
             App.Log.LogInfo($"Session rejointe : {session.Folder}");
-            Title += " – " + Path.GetFileName(session.Folder);
+            Title += " – " + session.Display;
             StatusText.Text = "En attente de l'accord de l'utilisateur…";
             Task.Run(() => ReceiveLoop(cts.Token));
             Task.Run(() => SendLoop(cts.Token));
@@ -134,35 +140,46 @@ namespace ErrorChecker
             Viewer.Focus();
         }
 
-        // Décodage hors du thread d'affichage, puis copie des seules zones reçues dans l'image.
+        // Défilements puis zones décodées (en parallèle) dans la copie locale, hors du thread d'affichage ;
+        // l'affichage ne fait que recopier les rectangles modifiés. Acquittement une fois l'image affichée.
         private void ApplyFrame(ScreenFrame frame)
         {
-            var decoded = frame.Patches.Select(r => (Patch: r, Pixels: Decode(r))).ToList();
+            bool resized = decoder.Apply(frame);
+            var target = decoder.Screen!;
+            int stride = frame.Width * 4;
             Interlocked.Increment(ref framesReceived);
-            Interlocked.Add(ref bytesReceived, frame.Patches.Sum(r => (long)r.Data.Length));
-            Dispatcher.InvokeAsync(() =>
+            Interlocked.Add(ref bytesReceived, frame.Patches.Sum(p => (long)p.Data.Length));
+
+            Dispatcher.Invoke(() =>
             {
-                if (bitmap == null || bitmap.PixelWidth != frame.Width || bitmap.PixelHeight != frame.Height)
+                if (resized || bitmap == null || bitmap.PixelWidth != frame.Width || bitmap.PixelHeight != frame.Height)
                 {
                     // DPI de cet écran : en « taille réelle », un pixel de l'utilisateur = un pixel ici.
                     var dpi = VisualTreeHelper.GetDpi(this);
                     bitmap = new WriteableBitmap(frame.Width, frame.Height, dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Bgr32, null);
                     ScreenImage.Source = bitmap;
+                    bitmap.WritePixels(new Int32Rect(0, 0, frame.Width, frame.Height), target, stride, 0, 0);
                 }
-                foreach (var (r, pixels) in decoded)
-                    bitmap.WritePixels(new Int32Rect(r.X, r.Y, r.W, r.H), pixels, r.W * 4, 0);
+                else
+                {
+                    foreach (var m in frame.Moves) bitmap.WritePixels(new Int32Rect(m.X, m.Y, m.W, m.H), target, stride, m.X, m.Y);
+                    foreach (var p in frame.Patches) bitmap.WritePixels(new Int32Rect(p.X, p.Y, p.W, p.H), target, stride, p.X, p.Y);
+                }
                 remoteCursor = new Point(frame.CursorX, frame.CursorY);
                 UpdateCursor();
             });
+            lagMs = frame.LagMs;
+            Enqueue(new Ack(frame.Seq));
         }
 
-        private static byte[] Decode(Patch patch)
+        private static void DecodeImage(Patch patch, byte[] screen, int stride)
         {
             using var ms = new MemoryStream(patch.Data);
             var image = BitmapDecoder.Create(ms, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0];
             var pixels = new byte[patch.W * patch.H * 4];
             new FormatConvertedBitmap(image, PixelFormats.Bgr32, null, 0).CopyPixels(pixels, patch.W * 4, 0);
-            return pixels;
+            for (int y = 0; y < patch.H; y++)
+                Buffer.BlockCopy(pixels, y * patch.W * 4, screen, (patch.Y + y) * stride + patch.X * 4, patch.W * 4);
         }
 
         private void UpdateCursor()
@@ -181,10 +198,12 @@ namespace ErrorChecker
         {
             int frames = Interlocked.Exchange(ref framesReceived, 0);
             long bytes = Interlocked.Exchange(ref bytesReceived, 0);
-            StatsText.Text = $"{frames} img/s · {bytes / 1024} Ko/s" + (roundTripMs >= 0 ? $" · aller-retour {roundTripMs:F0} ms" : "");
+            StatsText.Text = $"{frames} img/s · {bytes / 1024} Ko/s"
+                + (lagMs >= 0 ? $" · retard image {lagMs} ms" : "")
+                + (roundTripMs >= 0 ? $" · aller-retour {roundTripMs:F0} ms" : "");
         }
 
-        // Envoi groupé toutes les 20 ms : une écriture réseau par lot plutôt qu'une par touche.
+        // Envoi dès qu'il y a quelque chose ; ce qui arrive pendant une écriture part groupé dans la suivante.
         private async Task SendLoop(CancellationToken token)
         {
             var lastPing = DateTime.MinValue;
@@ -204,7 +223,7 @@ namespace ErrorChecker
                         pending = new List<Msg>();
                     }
                     writer!.Write(batch);
-                    await Task.Delay(20, token);
+                    await pendingSignal.WaitAsync(TimeSpan.FromSeconds(1), token);
                 }
             }
             catch (OperationCanceledException) { }
@@ -221,6 +240,7 @@ namespace ErrorChecker
                 else
                     pending.Add(msg);
             }
+            if (pendingSignal.CurrentCount == 0) pendingSignal.Release();
         }
 
         private void Settings_Changed(object sender, SelectionChangedEventArgs e)
