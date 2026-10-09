@@ -71,7 +71,7 @@ public class FrameRoundTripTests
 
         var edit = Send(encoder, decoder, Screen(0, edit: 3), quality, ref seq)!;            // saisie dans une cellule
         Assert.Empty(edit.Moves);
-        Assert.True(edit.Patches.Sum(p => p.W * p.H) <= 2 * 64 * 64, "seules les tuiles touchées sont envoyées");
+        Assert.True(edit.Patches.Sum(p => p.W * p.H) <= 100 * 20, "seuls les pixels modifiés (100x20) sont envoyés, pas les tuiles entières");
 
         var down = Send(encoder, decoder, Screen(37, edit: 3), quality, ref seq)!;            // défilement
         Assert.Single(down.Moves);

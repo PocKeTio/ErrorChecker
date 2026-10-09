@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace ErrorChecker.Core
 {
     public readonly record struct Area(int X, int Y, int W, int H);
@@ -74,6 +76,27 @@ namespace ErrorChecker.Core
                 open = next;
             }
             return result;
+        }
+
+        // Rectangle serré autour des pixels qui diffèrent dans r (null si aucun) : une saisie dans une cellule
+        // ne touche que quelques dizaines de pixels d'une tuile de 64x64.
+        public static Area? Shrink(byte[] previous, byte[] current, int stride, Area r)
+        {
+            int left = int.MaxValue, right = -1, top = -1, bottom = -1;
+            for (int y = r.Y; y < r.Y + r.H; y++)
+            {
+                var a = MemoryMarshal.Cast<byte, int>(previous.AsSpan(y * stride + r.X * 4, r.W * 4));
+                var b = MemoryMarshal.Cast<byte, int>(current.AsSpan(y * stride + r.X * 4, r.W * 4));
+                if (a.SequenceEqual(b)) continue;
+                int l = 0, rr = a.Length - 1;
+                while (a[l] == b[l]) l++;
+                while (a[rr] == b[rr]) rr--;
+                left = Math.Min(left, l);
+                right = Math.Max(right, rr);
+                if (top < 0) top = y;
+                bottom = y;
+            }
+            return right < 0 ? null : new Area(r.X + left, top, right - left + 1, bottom - top + 1);
         }
 
         private static bool TileChanged(byte[] a, byte[] b, int x, int y, int w, int h, int stride)

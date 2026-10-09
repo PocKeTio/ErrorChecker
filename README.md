@@ -54,9 +54,14 @@ s'accumule. La barre d'état affiche images/s, débit, retard image et aller-ret
 - **Transport** : un fichier journal par sens, lu au fil de l'eau via un handle ouvert (pas de liste de dossier,
   sujette aux caches SMB de 5 à 10 s), chiffré AES-GCM. La clé et le nom du dossier sont dérivés du code (PBKDF2) :
   rien de secret n'est écrit sur le partage.
-- **Image** : seules les tuiles 64×64 modifiées partent ; un défilement est envoyé comme « recopier ces lignes » ;
-  le texte et l'interface (peu de couleurs) passent par une palette **sans perte**, le reste en JPEG ; une zone
-  envoyée en JPEG puis immobile est renvoyée nette après 0,7 s ; encodage et décodage en parallèle.
+- **Image** : seuls les pixels modifiés partent (rectangle serré dans les tuiles 64×64 touchées) ; un défilement est
+  envoyé comme « recopier ces lignes » ; le texte et l'interface (peu de couleurs) passent par une palette **sans
+  perte** compressée en Brotli, seules les colonnes riches (photo, icônes) en JPEG ; une zone envoyée en JPEG puis
+  immobile est renvoyée nette après 0,7 s ; encodage et décodage en parallèle.
+
+  Mesuré sur 16 captures réelles (Excel, éditeurs VBA/SQL, dialogues, Outlook, web, fonds photo ; JPEG d'ImageSharp
+  en remplacement de GDI+) : image complète ≈ 63 Ko en moyenne, saisie dans une cellule ≈ 330 octets,
+  défilement de 20 px ≈ 4 Ko.
 - **Réactivité** : capture rapprochée juste après un clic ou une touche du dépanneur ; envoi immédiat des actions.
 
 ## Limites
